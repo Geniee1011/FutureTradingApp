@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { useAuthStore } from "@/store/auth-store";
 import { DEMO_USERS } from "@/lib/mock/data";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +13,7 @@ function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const login = useAuthStore((s) => s.login);
+  const registered = params.get("registered");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -42,6 +44,11 @@ function LoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      {registered && (
+        <div className="rounded-lg border border-long/40 bg-long/10 px-3 py-2 text-sm text-long">
+          Account created — please sign in.
+        </div>
+      )}
       <Field label="Email">
         <Input
           type="email"
@@ -92,6 +99,13 @@ function LoginForm() {
           </button>
         </div>
         <div className="mt-2 text-[11px] text-muted-2">Password for both: <span className="nums">demo</span></div>
+      </div>
+
+      <div className="text-center text-sm text-muted">
+        Don&apos;t have an account?{" "}
+        <Link href="/register" className="font-medium text-primary hover:underline">
+          Register
+        </Link>
       </div>
     </form>
   );

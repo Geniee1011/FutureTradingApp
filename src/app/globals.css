@@ -34,6 +34,34 @@
   --radius-card: 0.75rem;
 }
 
+/*
+  Dark is the default (tokens above). Light theme overrides the color tokens
+  when <html data-theme="light"> is set (see ThemeToggle / no-FOUC script).
+*/
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-background: #f3f5f8;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f4f8;
+  --color-surface-3: #e7ebf1;
+  --color-border: #e2e7ee;
+  --color-border-strong: #cdd4df;
+  --color-foreground: #131a26;
+  --color-muted: #586573;
+  --color-muted-2: #93a0af;
+  --color-primary: #2f6fe0;
+  --color-primary-hover: #2560c4;
+  --color-long: #0e9f6e;
+  --color-long-soft: #0e9f6e1f;
+  --color-short: #e02424;
+  --color-short-soft: #e024241f;
+  --color-warning: #b8820a;
+  --color-info: #2f6fe0;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

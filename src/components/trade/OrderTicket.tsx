@@ -21,6 +21,7 @@ export function OrderTicket({ symbol }: { symbol: string }) {
   const [price, setPrice] = useState("");
   const [tif, setTif] = useState<TimeInForce>("GTC");
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // Prefill limit/stop price with the current market price when switching modes.
   useEffect(() => {
@@ -31,9 +32,11 @@ export function OrderTicket({ symbol }: { symbol: string }) {
   const refPrice = type === "market" ? quote?.price ?? 0 : parseFloat(price) || 0;
   const notional = qtyNum * refPrice;
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    const res = placeOrder({
+    if (submitting) return;
+    setSubmitting(true);
+    const res = await placeOrder({
       symbol,
       side,
       type,
@@ -41,11 +44,9 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       price: type === "market" ? null : parseFloat(price),
       timeInForce: tif,
     });
+    setSubmitting(false);
     if (res.ok) {
-      setFeedback({
-        ok: true,
-        msg: `${side === "buy" ? "Bought" : "Sold"} ${qtyNum} ${symbol} (${res.order!.status})`,
-      });
+      setFeedback({ ok: true, msg: `${side === "buy" ? "Bought" : "Sold"} ${qtyNum} ${symbol}` });
       setQuantity("");
     } else {
       setFeedback({ ok: false, msg: res.error ?? "Order rejected" });
@@ -144,7 +145,13 @@ export function OrderTicket({ symbol }: { symbol: string }) {
         </div>
       )}
 
-      <Button type="submit" variant={side === "buy" ? "long" : "short"} size="lg" disabled={qtyNum <= 0}>
+      <Button
+        type="submit"
+        variant={side === "buy" ? "long" : "short"}
+        size="lg"
+        loading={submitting}
+        disabled={qtyNum <= 0}
+      >
         {side === "buy" ? "Buy" : "Sell"} {symbol}
       </Button>
     </form>

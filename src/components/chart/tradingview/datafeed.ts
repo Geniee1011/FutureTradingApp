@@ -64,6 +64,8 @@ interface Subscription {
 /** Factory returning an object compatible with `new widget({ datafeed })`. */
 export function createDatafeed() {
   const subscriptions = new Map<string, Subscription>();
+  // Last bar per symbol:resolution, so realtime ticks continue from history.
+  const lastBars = new Map<string, Bar>();
 
   return {
     onReady(callback: (config: unknown) => void) {
@@ -133,6 +135,12 @@ export function createDatafeed() {
       onResult: (bars: Bar[], meta: { noData: boolean }) => void,
       onError: (reason: string) => void,
     ) {
+      // Our backend serves the latest N bars only (no from/to range), so we
+      // only answer the first request and report no older data for paging.
+      if (!periodParams.firstDataRequest) {
+        onResult([], { noData: true });
+        return;
+      }
       try {
         const sec = resolutionToSeconds(resolution);
         const candles = await getWsClient().getHistory(
@@ -148,6 +156,7 @@ export function createDatafeed() {
           close: c.close,
           volume: c.volume,
         }));
+        if (bars.length) lastBars.set(`${symbolInfo.name}:${resolution}`, bars[bars.length - 1]!);
         onResult(bars, { noData: bars.length === 0 });
       } catch (e) {
         onError(String(e));
@@ -180,7 +189,7 @@ export function createDatafeed() {
       subscriptions.set(listenerGuid, {
         symbol: symbolInfo.name,
         resolutionSec,
-        lastBar: null,
+        lastBar: lastBars.get(`${symbolInfo.name}:${resolution}`) ?? null,
         onTick,
         unsubscribe,
       });

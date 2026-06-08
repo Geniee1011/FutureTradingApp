@@ -63,14 +63,16 @@ export function seedAccountSummary(): AccountSummary {
   return {
     accountId: "ACC-100482",
     currency: "USD",
-    balance: 125_400.55,
-    equity: 131_980.12,
-    marginUsed: 18_240.0,
-    marginAvailable: 113_740.12,
-    buyingPower: 568_700.6,
-    unrealizedPnl: 6_579.57,
+    status: "ACTIVE",
+    startingBalance: 50_000,
+    balance: 51_204.18,
+    equity: 51_354.75,
+    unrealizedPnl: 150.57,
     realizedPnlToday: 1_204.18,
-    leverage: 5,
+    totalPnl: 1_204.18,
+    drawdown: 320.4,
+    highestEquity: 51_524.58,
+    rule: { profitTarget: 6_000, maxDailyLoss: 2_500, maxDrawdown: 3_000, maxContracts: 5 },
   };
 }
 

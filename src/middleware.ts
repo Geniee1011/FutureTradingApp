@@ -20,8 +20,8 @@ export function middleware(req: NextRequest) {
   const isTraderArea = TRADER_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
   const isAdminArea = pathname === ADMIN_PREFIX || pathname.startsWith(ADMIN_PREFIX + "/");
 
-  // Already authenticated users shouldn't see the login page.
-  if (pathname === "/login" && session) {
+  // Already authenticated users shouldn't see the login/register pages.
+  if ((pathname === "/login" || pathname === "/register") && session) {
     const home = session.role === "admin" ? "/admin/traders" : "/dashboard";
     return NextResponse.redirect(new URL(home, req.url));
   }
@@ -41,5 +41,13 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/login", "/dashboard/:path*", "/trade/:path*", "/orders/:path*", "/account/:path*", "/admin/:path*"],
+  matcher: [
+    "/login",
+    "/register",
+    "/dashboard/:path*",
+    "/trade/:path*",
+    "/orders/:path*",
+    "/account/:path*",
+    "/admin/:path*",
+  ],
 };

@@ -6,6 +6,7 @@ import { TRADER_NAV } from "@/lib/constants";
 import { Icon, type IconName } from "@/components/icons";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { UserMenu } from "./UserMenu";
+import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
 
 export function TopNav() {
@@ -40,8 +41,9 @@ export function TopNav() {
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-4">
+        <div className="ml-auto flex items-center gap-3">
           <ConnectionStatus className="hidden sm:flex" />
+          <ThemeToggle />
           <UserMenu />
         </div>
       </div>

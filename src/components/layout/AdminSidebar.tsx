@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ADMIN_NAV } from "@/lib/constants";
 import { Icon, type IconName } from "@/components/icons";
 import { UserMenu } from "./UserMenu";
+import { ThemeToggle } from "./ThemeToggle";
 import { cn } from "@/lib/utils";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
@@ -75,7 +76,8 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               );
             })}
           </nav>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-3">
+            <ThemeToggle />
             <UserMenu />
           </div>
         </header>

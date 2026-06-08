@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import type { ConnectionStatus, OrderBook, Quote } from "@/lib/types";
-import { DEFAULT_SYMBOL, INSTRUMENTS, WATCHLIST } from "@/lib/constants";
+import { DEFAULT_SYMBOL, INSTRUMENTS } from "@/lib/constants";
 import { computeContractCode } from "@/lib/contract-code";
 import { getWsClient } from "@/lib/ws-client";
 
@@ -19,9 +19,6 @@ interface MarketState {
   selectSymbol: (symbol: string) => void;
   loadInstruments: () => Promise<void>;
 }
-
-/** Symbols we currently have a live quote subscription for (non-reactive). */
-const quoteSubs = new Set<string>();
 
 export const useMarketStore = create<MarketState>((set, get) => ({
   quotes: {},
@@ -52,13 +49,10 @@ export const useMarketStore = create<MarketState>((set, get) => ({
 
     ws.connect();
 
-    // Subscribe quotes only for the watchlist + selected symbol (keeps the
-    // backend polling lean). The picker can list all instruments without prices.
-    for (const sym of new Set<string>([...WATCHLIST, get().selectedSymbol])) {
-      ws.subscribe("quotes", sym);
-      quoteSubs.add(sym);
-    }
-    ws.subscribe("orderbook", get().selectedSymbol);
+    // Subscribe to the selected symbol's quotes. Position symbols are subscribed
+    // by TraderProvider so their P&L stays live. (Subscriptions are
+    // subscriber-driven, so the backend only streams what's actually shown.)
+    ws.subscribe("quotes", get().selectedSymbol);
 
     void get().loadInstruments();
   },
@@ -68,18 +62,7 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     if (prev === symbol) return;
     const ws = getWsClient();
 
-    ws.unsubscribe("orderbook", prev);
-    ws.subscribe("orderbook", symbol);
-
-    if (!quoteSubs.has(symbol)) {
-      ws.subscribe("quotes", symbol);
-      quoteSubs.add(symbol);
-    }
-    // Drop the previous symbol's quote stream unless it's a pinned favorite.
-    if (!WATCHLIST.includes(prev) && prev !== symbol) {
-      ws.unsubscribe("quotes", prev);
-      quoteSubs.delete(prev);
-    }
+    ws.subscribe("quotes", symbol); // cumulative; ws-client de-dupes
 
     set({ selectedSymbol: symbol, orderbook: null });
   },

@@ -18,6 +18,8 @@ import {
 import { getWsClient } from "@/lib/ws-client";
 import { useMarketStore } from "@/store/market-store";
 import { useOrdersStore } from "@/store/orders-store";
+import { useThemeStore } from "@/store/theme-store";
+import { getChartColors } from "@/lib/chart-theme";
 import { getInstrument } from "@/lib/constants";
 import type { OrderType, Side } from "@/lib/types";
 import { formatPrice, cn } from "@/lib/utils";
@@ -57,6 +59,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [placed, setPlaced] = useState<string | null>(null);
 
   const placeOrder = useOrdersStore((s) => s.placeOrder);
+  const theme = useThemeStore((s) => s.theme);
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
   const round = (p: number) => Math.round(p * 10 ** precision) / 10 ** precision;
@@ -66,36 +69,37 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const container = containerRef.current;
     if (!container) return;
 
+    const c = getChartColors();
     const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#8a97ad",
+        textColor: c.text,
         fontFamily: "var(--font-geist-mono), monospace",
         attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "#1d2738" },
-        horzLines: { color: "#1d2738" },
+        vertLines: { color: c.grid },
+        horzLines: { color: c.grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: "#243049" },
-      timeScale: { borderColor: "#243049", timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: c.border },
+      timeScale: { borderColor: c.border, timeVisible: true, secondsVisible: false },
       autoSize: true,
     });
 
     const candle = chart.addSeries(CandlestickSeries, {
-      upColor: "#16c784",
-      downColor: "#ea3943",
+      upColor: c.up,
+      downColor: c.down,
       borderVisible: false,
-      wickUpColor: "#16c784",
-      wickDownColor: "#ea3943",
+      wickUpColor: c.up,
+      wickDownColor: c.down,
       priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision },
     });
 
     const volume = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "",
-      color: "#33415e",
+      color: c.volume,
     });
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
@@ -120,6 +124,21 @@ export function CandleChart({ symbol }: { symbol: string }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Recolor the chart when the theme changes (no rebuild / data reload).
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const c = getChartColors();
+    chart.applyOptions({
+      layout: { textColor: c.text },
+      grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+      rightPriceScale: { borderColor: c.border },
+      timeScale: { borderColor: c.border },
+    });
+    candleRef.current?.applyOptions({ upColor: c.up, downColor: c.down, wickUpColor: c.up, wickDownColor: c.down });
+    volumeRef.current?.applyOptions({ color: c.volume });
+  }, [theme]);
 
   // Load history whenever symbol/resolution changes.
   useEffect(() => {
@@ -213,16 +232,30 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const sellType: OrderType = isAbove ? "limit" : "stop";
   const buyType: OrderType = isAbove ? "stop" : "limit";
 
-  function submit(side: Side) {
+  async function submit(side: Side, asMarket = false) {
     if (!ticket) return;
-    const type: OrderType = side === "sell" ? sellType : buyType;
-    const res = placeOrder({ symbol, side, type, quantity: qty, price: ticketPrice });
-    if (res.ok) {
-      setPlaced(`${side === "buy" ? "Buy" : "Sell"} ${qty} ${symbol} ${type.toUpperCase()} @ ${formatPrice(ticketPrice, precision)}`);
-      setTimeout(() => setPlaced(null), 2800);
-    }
+    const type: OrderType = asMarket ? "market" : side === "sell" ? sellType : buyType;
+    // Market orders fill at the live quote, so they carry no price level.
+    const price = asMarket ? null : ticketPrice;
+    const at = asMarket ? "MKT" : `${type.toUpperCase()} @ ${formatPrice(ticketPrice, precision)}`;
+    const label = `${side === "buy" ? "Buy" : "Sell"} ${qty} ${symbol} ${at}`;
     setTicket(null);
+    const res = await placeOrder({ symbol, side, type, quantity: qty, price });
+    setPlaced(res.ok ? `✓ ${label}` : `✗ ${res.error ?? "Order rejected"}`);
+    setTimeout(() => setPlaced(null), 3000);
   }
+
+  // Zoom by scaling the visible logical range around its center.
+  // factor < 1 zooms in (fewer bars), factor > 1 zooms out (more bars).
+  const zoom = (factor: number) => {
+    const ts = chartRef.current?.timeScale();
+    const range = ts?.getVisibleLogicalRange();
+    if (!ts || !range) return;
+    const center = (range.from + range.to) / 2;
+    const half = ((range.to - range.from) / 2) * factor;
+    ts.setVisibleLogicalRange({ from: center - half, to: center + half });
+  };
+  const resetZoom = () => chartRef.current?.timeScale().fitContent();
 
   // Flip the popup to the left when clicking near the right edge.
   const flip = ticket && containerRef.current ? ticket.x > containerRef.current.clientWidth * 0.62 : false;
@@ -242,7 +275,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
             {r.label}
           </button>
         ))}
-        <span className="ml-auto hidden text-[11px] text-muted-2 sm:block">Click the chart to trade</span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden text-[11px] text-muted-2 sm:block">Click the chart to trade</span>
+          <div className="flex items-center gap-1">
+            <ZoomBtn onClick={() => zoom(0.7)} label="Zoom in">+</ZoomBtn>
+            <ZoomBtn onClick={() => zoom(1.4)} label="Zoom out">−</ZoomBtn>
+            <ZoomBtn onClick={resetZoom} label="Reset zoom">⤢</ZoomBtn>
+          </div>
+        </div>
       </div>
 
       <div className="relative flex-1">
@@ -253,8 +293,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
         )}
 
         {placed && (
-          <div className="absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-md border border-long/40 bg-long/15 px-3 py-1 text-xs text-long shadow">
-            ✓ {placed}
+          <div
+            className={cn(
+              "absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-md border px-3 py-1 text-xs shadow",
+              placed.startsWith("✗") ? "border-short/40 bg-short/15 text-short" : "border-long/40 bg-long/15 text-long",
+            )}
+          >
+            {placed}
           </div>
         )}
 
@@ -299,11 +344,41 @@ export function CandleChart({ symbol }: { symbol: string }) {
               >
                 Buy {qty} {buyType.toUpperCase()} @ {formatPrice(ticketPrice, precision)}
               </button>
+
+              {/* Market orders — ignore the clicked level, fill at the live quote. */}
+              <div className="my-0.5 h-px bg-border-strong" />
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  onClick={() => submit("sell", true)}
+                  className="rounded-md border border-short/50 px-2 py-1 text-xs font-semibold text-short hover:bg-short/15"
+                >
+                  Sell {qty} MKT
+                </button>
+                <button
+                  onClick={() => submit("buy", true)}
+                  className="rounded-md border border-long/50 px-2 py-1 text-xs font-semibold text-long hover:bg-long/15"
+                >
+                  Buy {qty} MKT
+                </button>
+              </div>
             </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function ZoomBtn({ children, onClick, label }: { children: React.ReactNode; onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-surface-2 text-sm font-medium text-muted transition-colors hover:bg-surface-3 hover:text-foreground"
+    >
+      {children}
+    </button>
   );
 }
 

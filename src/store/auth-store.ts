@@ -35,6 +35,11 @@ interface AuthState {
   token: string | null;
   hydrated: boolean;
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string; role?: Role }>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   setHydrated: () => void;
 }
@@ -86,6 +91,27 @@ export const useAuthStore = create<AuthState>()(
         setCookie(SESSION_COOKIE, `${user.id}:${user.role}`);
         set({ user, token: null });
         return { ok: true, role: user.role };
+      },
+
+      // Create an account in Postgres. Does NOT log in — the flow returns to /login.
+      register: async (name, email, password) => {
+        if (USE_MOCK_FEED || !API_BASE) {
+          // Demo mode has no backend DB to persist to.
+          await new Promise((r) => setTimeout(r, 300));
+          return { ok: false, error: "Registration requires the backend (no database configured)." };
+        }
+        try {
+          const res = await fetch(`${API_BASE}/api/auth/register`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name.trim(), email: email.trim(), password }),
+          });
+          if (res.ok) return { ok: true };
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          return { ok: false, error: data.error ?? "Registration failed. Please try again." };
+        } catch {
+          return { ok: false, error: "Could not reach the server. Please try again." };
+        }
       },
 
       logout: () => {

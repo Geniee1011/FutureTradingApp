@@ -1,15 +1,25 @@
 "use client";
 
+import { useState } from "react";
 import { useOrdersStore } from "@/store/orders-store";
 import { useMarketStore } from "@/store/market-store";
 import { getInstrument } from "@/lib/constants";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { formatCurrency, formatPrice, formatSigned, cn } from "@/lib/utils";
 
-/** Open positions with live mark price + unrealized P&L. */
+/** Open positions with live mark price + unrealized P&L, and a Close action. */
 export function PositionsTable() {
   const positions = useOrdersStore((s) => s.positions);
+  const closePosition = useOrdersStore((s) => s.closePosition);
   const quotes = useMarketStore((s) => s.quotes);
+  const [closing, setClosing] = useState<string | null>(null);
+
+  async function close(symbol: string) {
+    setClosing(symbol);
+    await closePosition(symbol);
+    setClosing(null);
+  }
 
   if (positions.length === 0) {
     return <div className="px-4 py-10 text-center text-sm text-muted">No open positions.</div>;
@@ -17,7 +27,7 @@ export function PositionsTable() {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[680px] text-sm">
+      <table className="w-full min-w-[720px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
             <th className="px-4 py-2.5 font-medium">Symbol</th>
@@ -26,6 +36,7 @@ export function PositionsTable() {
             <th className="px-4 py-2.5 text-right font-medium">Avg price</th>
             <th className="px-4 py-2.5 text-right font-medium">Mark</th>
             <th className="px-4 py-2.5 text-right font-medium">Unrealized P&L</th>
+            <th className="px-4 py-2.5 text-right font-medium"></th>
           </tr>
         </thead>
         <tbody>
@@ -52,6 +63,11 @@ export function PositionsTable() {
                   <div className={cn("nums text-xs", pnl >= 0 ? "text-long" : "text-short")}>
                     {formatSigned(pnlPct)}%
                   </div>
+                </td>
+                <td className="px-4 py-2.5 text-right">
+                  <Button variant="danger" size="sm" loading={closing === p.symbol} onClick={() => close(p.symbol)}>
+                    Close
+                  </Button>
                 </td>
               </tr>
             );

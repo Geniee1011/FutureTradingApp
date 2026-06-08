@@ -6,8 +6,6 @@ import { useOrdersStore } from "@/store/orders-store";
 import { getInstrument } from "@/lib/constants";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Watchlist } from "@/components/market/Watchlist";
-import { OrderBook } from "@/components/market/OrderBook";
 import { OrderTicket } from "@/components/trade/OrderTicket";
 import { PositionsTable } from "@/components/trade/PositionsTable";
 import { OrdersTable } from "@/components/trade/OrdersTable";
@@ -28,17 +26,9 @@ export default function TradePage() {
   const openOrders = orders.filter((o) => o.status === "open" || o.status === "partial");
 
   return (
-    <div className="grid gap-3 lg:grid-cols-[240px_1fr_300px]">
-      {/* Left: market list */}
-      <Card className="order-2 overflow-hidden lg:order-1">
-        <div className="border-b border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
-          Markets
-        </div>
-        <Watchlist />
-      </Card>
-
+    <div className="grid gap-3 lg:grid-cols-[1fr_300px] lg:items-start">
       {/* Center: instrument header + chart + bottom tabs */}
-      <div className="order-1 flex flex-col gap-3 lg:order-2">
+      <div className="flex flex-col gap-3">
         <Card>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
             <SymbolPicker />
@@ -66,10 +56,16 @@ export default function TradePage() {
           </div>
         </Card>
 
-        <Card className="h-[420px] overflow-hidden">
+        <Card className="h-[480px] overflow-hidden lg:h-[calc(100vh-13rem)] lg:min-h-[440px]">
           <AdvancedChart symbol={symbol} />
         </Card>
+      </div>
 
+      {/* Right: order ticket + positions / open orders */}
+      <div className="flex flex-col gap-3">
+        <Card className="overflow-hidden">
+          <OrderTicket symbol={symbol} />
+        </Card>
         <Card className="overflow-hidden">
           <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
             <TabButton active={bottomTab === "positions"} onClick={() => setBottomTab("positions")}>
@@ -80,21 +76,6 @@ export default function TradePage() {
             </TabButton>
           </div>
           {bottomTab === "positions" ? <PositionsTable /> : <OrdersTable orders={openOrders} />}
-        </Card>
-      </div>
-
-      {/* Right: order ticket + order book */}
-      <div className="order-3 flex flex-col gap-3">
-        <Card className="overflow-hidden">
-          <OrderTicket symbol={symbol} />
-        </Card>
-        <Card className="h-[320px] overflow-hidden">
-          <div className="border-b border-border px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted">
-            Order book
-          </div>
-          <div className="h-[calc(100%-37px)]">
-            <OrderBook symbol={symbol} />
-          </div>
         </Card>
       </div>
     </div>

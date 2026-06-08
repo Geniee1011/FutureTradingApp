@@ -27,9 +27,6 @@ export const INSTRUMENTS: Instrument[] = [
   { symbol: "MGC", name: "Micro Gold", category: "Metals", pricePrecision: 1, tickSize: 0.1, basePrice: 4488 },
 ];
 
-/** Symbols shown with live prices in the watchlist (kept small to limit polling). */
-export const WATCHLIST = ["ES", "NQ", "YM", "CL", "GC"];
-
 export const DEFAULT_SYMBOL = "ES";
 
 export function getInstrument(symbol: string): Instrument | undefined {

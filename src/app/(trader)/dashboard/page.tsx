@@ -1,21 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useAccountStore } from "@/store/account-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useMarketStore } from "@/store/market-store";
-import { useAuthStore } from "@/store/auth-store";
+import { useAuthStore, getAuthToken } from "@/store/auth-store";
+import { WS_URL, USE_MOCK_FEED } from "@/lib/constants";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Button } from "@/components/ui/Button";
-import { Watchlist } from "@/components/market/Watchlist";
 import { PositionsTable } from "@/components/trade/PositionsTable";
 import { OrdersTable } from "@/components/trade/OrdersTable";
 import { EquityChart } from "@/components/chart/EquityChart";
 import { seedEquityCurve } from "@/lib/mock/data";
-import { formatCurrency, formatSigned } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
+
+const API_BASE = WS_URL ? WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "") : "";
 
 export default function DashboardPage() {
   const user = useAuthStore((s) => s.user);
@@ -23,7 +25,34 @@ export default function DashboardPage() {
   const orders = useOrdersStore((s) => s.orders);
   const positions = useOrdersStore((s) => s.positions);
   const quotes = useMarketStore((s) => s.quotes);
-  const equityCurve = useMemo(() => seedEquityCurve(), []);
+  const [equityCurve, setEquityCurve] = useState<{ time: number; value: number }[]>([]);
+
+  // Equity curve: realized-balance series from the backend (Transaction ledger),
+  // with the demo fallback when there's no backend/session.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const token = getAuthToken();
+      if (!USE_MOCK_FEED && API_BASE && token) {
+        try {
+          const res = await fetch(`${API_BASE}/api/equity-curve`, { headers: { Authorization: `Bearer ${token}` } });
+          if (res.ok) {
+            const data = (await res.json()) as { time: number; value: number }[];
+            if (!cancelled && data.length > 1) {
+              setEquityCurve(data);
+              return;
+            }
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+      if (!cancelled) setEquityCurve(seedEquityCurve());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Live unrealized P&L across open positions.
   const unrealized = positions.reduce((acc, p) => {
@@ -60,23 +89,19 @@ export default function DashboardPage() {
           tone={(summary?.realizedPnlToday ?? 0) >= 0 ? "long" : "short"}
         />
         <Stat
-          label="Margin available"
-          value={formatCurrency(summary?.marginAvailable ?? 0)}
-          hint={summary ? `${formatSigned(((summary.marginUsed / summary.equity) * 100))}% used` : ""}
+          label="Total P&L"
+          value={formatCurrency(summary?.totalPnl ?? 0)}
+          tone={(summary?.totalPnl ?? 0) >= 0 ? "long" : "short"}
+          hint={summary ? `Target ${formatCurrency(summary.rule.profitTarget)}` : ""}
         />
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+      <div className="mt-4">
+        <Card>
           <CardHeader title="Equity curve" subtitle="Last 60 days" />
           <CardBody className="h-[300px] p-2">
             <EquityChart data={equityCurve} />
           </CardBody>
-        </Card>
-
-        <Card className="overflow-hidden">
-          <CardHeader title="Markets" subtitle="Live prices" />
-          <Watchlist />
         </Card>
       </div>
 

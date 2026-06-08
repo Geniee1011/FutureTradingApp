@@ -11,9 +11,20 @@ export const metadata: Metadata = {
   description: "Real-time trading portal and admin CRM",
 };
 
+// Applies the saved theme before paint to avoid a flash of the wrong theme.
+const noFlashTheme = `(function(){try{var t=localStorage.getItem('tp-theme')||'dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})();`;
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      data-theme="dark"
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: noFlashTheme }} />
+      </head>
       <body className="min-h-full">
         <AuthHydrator />
         {children}

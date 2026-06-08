@@ -102,17 +102,27 @@ export interface Position {
 
 /* ----------------------------- Account ---------------------------- */
 
+/** Evaluation objectives for an account (from the Rule table). */
+export interface EvalRule {
+  profitTarget: number;
+  maxDailyLoss: number;
+  maxDrawdown: number;
+  maxContracts: number;
+}
+
 export interface AccountSummary {
   accountId: string;
   currency: string;
+  status: "ACTIVE" | "PASSED" | "FAILED" | "SUSPENDED";
+  startingBalance: number;
   balance: number; // cash
   equity: number; // balance + unrealized pnl
-  marginUsed: number;
-  marginAvailable: number;
-  buyingPower: number;
   unrealizedPnl: number;
-  realizedPnlToday: number;
-  leverage: number;
+  realizedPnlToday: number; // dailyPnl
+  totalPnl: number;
+  drawdown: number;
+  highestEquity: number;
+  rule: EvalRule;
 }
 
 export interface Transaction {
@@ -221,6 +231,7 @@ export type ServerMessage =
       realizedPnlToday: number;
     }
   | { type: "order_update"; order: Order }
+  | { type: "positions_snapshot"; positions: Position[] }
   | { type: "admin_update"; event: unknown };
 
 export type ClientMessage =
