@@ -51,6 +51,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
+  const lastVolumeRef = useRef<HistogramData<UTCTimestamp> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
   const [resolution, setResolution] = useState(60);
   const [loading, setLoading] = useState(true);
@@ -164,6 +165,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
         candleRef.current.setData(candleData);
         volumeRef.current.setData(volData);
         lastCandleRef.current = candleData[candleData.length - 1] ?? null;
+        lastVolumeRef.current = volData[volData.length - 1] ?? null;
         chartRef.current?.timeScale().fitContent();
         setLoading(false);
       })
@@ -181,9 +183,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const last = lastCandleRef.current;
     const price = quote.price;
 
+    const size = quote.lastSize ?? 0;
+    const upColor = "#16c78455";
+    const downColor = "#ea394355";
+
     let next: CandlestickData<UTCTimestamp>;
+    let nextVol: HistogramData<UTCTimestamp>;
     if (!last || bucket > (last.time as number)) {
       next = { time: bucket, open: price, high: price, low: price, close: price };
+      nextVol = { time: bucket, value: size, color: upColor }; // new bar opens flat → up tone
     } else {
       next = {
         time: last.time,
@@ -192,9 +200,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
         low: Math.min(last.low, price),
         close: price,
       };
+      // Accumulate this minute's traded size into the forming volume bar.
+      const prevVol = lastVolumeRef.current?.time === last.time ? (lastVolumeRef.current?.value ?? 0) : 0;
+      nextVol = { time: last.time, value: prevVol + size, color: price >= next.open ? upColor : downColor };
     }
     lastCandleRef.current = next;
+    lastVolumeRef.current = nextVol;
     candleRef.current.update(next);
+    volumeRef.current?.update(nextVol);
   }, [quote, resolution, loading]);
 
   // Draw / clear the dashed order line while a ticket is open.

@@ -36,6 +36,7 @@ export interface Quote {
   high24h: number;
   low24h: number;
   volume24h: number;
+  lastSize?: number; // size of the trade that produced this tick (0 on stats-only refresh)
   ts: number; // epoch ms
 }
 
@@ -118,7 +119,8 @@ export interface AccountSummary {
   balance: number; // cash
   equity: number; // balance + unrealized pnl
   unrealizedPnl: number;
-  realizedPnlToday: number; // dailyPnl
+  realizedPnlToday: number; // realized P&L booked today
+  dailyPnl: number; // equity-based day P&L (vs day-start equity) — drives the daily-loss limit
   totalPnl: number;
   drawdown: number;
   highestEquity: number;
@@ -188,6 +190,17 @@ export interface TradingRule {
   updatedBy: string;
 }
 
+/** Per-account evaluation limits (the real backend Rule the risk engine enforces). */
+export interface AccountRule {
+  accountId: string;
+  traderName: string;
+  email: string;
+  maxDailyLoss: number;
+  maxDrawdown: number;
+  profitTarget: number;
+  maxContracts: number;
+}
+
 export type ActivitySeverity = "info" | "warning" | "critical";
 
 export interface ActivityEvent {
@@ -225,10 +238,14 @@ export type ServerMessage =
     }
   | {
       type: "account_update";
+      status: "ACTIVE" | "PASSED" | "FAILED" | "SUSPENDED";
       balance: number;
       equity: number;
       unrealizedPnl: number;
       realizedPnlToday: number;
+      dailyPnl: number;
+      totalPnl: number;
+      drawdown: number;
     }
   | { type: "order_update"; order: Order }
   | { type: "positions_snapshot"; positions: Position[] }

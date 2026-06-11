@@ -7,6 +7,7 @@
 import { seededRandom } from "../utils";
 import { INSTRUMENTS } from "../constants";
 import type {
+  AccountRule,
   AccountSummary,
   ActivityEvent,
   AdminAccount,
@@ -14,7 +15,6 @@ import type {
   OrderStatus,
   Position,
   Side,
-  TradingRule,
   TraderRecord,
   Transaction,
   User,
@@ -69,6 +69,7 @@ export function seedAccountSummary(): AccountSummary {
     equity: 51_354.75,
     unrealizedPnl: 150.57,
     realizedPnlToday: 1_204.18,
+    dailyPnl: 1_354.75,
     totalPnl: 1_204.18,
     drawdown: 320.4,
     highestEquity: 51_524.58,
@@ -248,17 +249,20 @@ export function seedAdminAccounts(traders: TraderRecord[]): AdminAccount[] {
   return out;
 }
 
-export function seedRules(): TradingRule[] {
-  return [
-    { id: "RULE-01", name: "Global max leverage", kind: "max-leverage", scope: "global", target: "all", value: "50x", enabled: true, updatedAt: NOW - 12 * DAY, updatedBy: "Alex Admin" },
-    { id: "RULE-02", name: "Platinum max position", kind: "max-position-size", scope: "tier", target: "platinum", value: "$2,000,000", enabled: true, updatedAt: NOW - 3 * DAY, updatedBy: "Alex Admin" },
-    { id: "RULE-03", name: "Gold max position", kind: "max-position-size", scope: "tier", target: "gold", value: "$750,000", enabled: true, updatedAt: NOW - 3 * DAY, updatedBy: "Alex Admin" },
-    { id: "RULE-04", name: "Daily loss circuit breaker", kind: "max-daily-loss", scope: "global", target: "all", value: "15% of equity", enabled: true, updatedAt: NOW - 20 * DAY, updatedBy: "Risk Bot" },
-    { id: "RULE-05", name: "Crypto-only weekend trading", kind: "instrument-whitelist", scope: "global", target: "all", value: "BTC-USD, ETH-USD, SOL-USD", enabled: false, updatedAt: NOW - 40 * DAY, updatedBy: "Alex Admin" },
-    { id: "RULE-06", name: "Equities trading hours", kind: "trading-hours", scope: "global", target: "stocks", value: "13:30–20:00 UTC, Mon–Fri", enabled: true, updatedAt: NOW - 8 * DAY, updatedBy: "Alex Admin" },
-    { id: "RULE-07", name: "Bronze max leverage", kind: "max-leverage", scope: "tier", target: "bronze", value: "10x", enabled: true, updatedAt: NOW - 2 * DAY, updatedBy: "Alex Admin" },
-    { id: "RULE-08", name: "TR-20488 position freeze", kind: "max-position-size", scope: "trader", target: "TR-20488", value: "$0 (frozen)", enabled: true, updatedAt: NOW - 6 * HOUR, updatedBy: "Risk Bot" },
-  ];
+export function seedRules(): AccountRule[] {
+  const rng = makeRng(202);
+  return Array.from({ length: 6 }, (_, i) => {
+    const name = `${pick(rng, FIRST)} ${pick(rng, LAST)}`;
+    return {
+      accountId: `ACC-${(100000 + i).toString()}`,
+      traderName: name,
+      email: `${name.toLowerCase().replace(/[^a-z]+/g, ".")}@mail.com`,
+      maxDailyLoss: pick(rng, [2000, 2500, 3000] as const),
+      maxDrawdown: pick(rng, [2500, 3000, 4000] as const),
+      profitTarget: pick(rng, [5000, 6000, 9000] as const),
+      maxContracts: pick(rng, [3, 5, 10] as const),
+    };
+  });
 }
 
 export function seedActivity(count = 40): ActivityEvent[] {

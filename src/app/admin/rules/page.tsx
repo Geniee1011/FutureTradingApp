@@ -1,91 +1,113 @@
 "use client";
 
+import { useState } from "react";
 import { useAdminStore } from "@/store/admin-store";
-import type { RuleKind, RuleScope } from "@/lib/types";
+import type { AccountRule } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { formatDateTime, cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils";
 
-const KIND_LABEL: Record<RuleKind, string> = {
-  "max-leverage": "Max leverage",
-  "max-position-size": "Max position size",
-  "max-daily-loss": "Max daily loss",
-  "instrument-whitelist": "Instrument whitelist",
-  "trading-hours": "Trading hours",
-};
-const SCOPE_TONE: Record<RuleScope, "primary" | "info" | "warning"> = {
-  global: "primary",
-  tier: "info",
-  trader: "warning",
-};
+type Editable = Pick<AccountRule, "maxDailyLoss" | "maxDrawdown" | "profitTarget" | "maxContracts">;
+const FIELDS: { key: keyof Editable; label: string; money: boolean }[] = [
+  { key: "maxDailyLoss", label: "Max daily loss", money: true },
+  { key: "maxDrawdown", label: "Max drawdown", money: true },
+  { key: "profitTarget", label: "Profit target", money: true },
+  { key: "maxContracts", label: "Max contracts", money: false },
+];
 
 export default function RulesPage() {
   const rules = useAdminStore((s) => s.rules);
-  const toggleRule = useAdminStore((s) => s.toggleRule);
+  const updateRule = useAdminStore((s) => s.updateRule);
 
-  const enabled = rules.filter((r) => r.enabled).length;
+  const avgTarget = rules.length ? rules.reduce((a, r) => a + r.profitTarget, 0) / rules.length : 0;
+  const avgDrawdown = rules.length ? rules.reduce((a, r) => a + r.maxDrawdown, 0) / rules.length : 0;
 
   return (
     <div>
       <PageHeader
-        title="Trading Rules"
-        subtitle="Risk limits and trading restrictions applied across the platform."
-        actions={<Button>New rule</Button>}
+        title="Evaluation Rules"
+        subtitle="Per-account risk limits enforced live by the evaluation engine."
       />
 
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Total rules" value={rules.length} />
-        <Stat label="Enabled" value={enabled} tone="long" />
-        <Stat label="Disabled" value={rules.length - enabled} tone="neutral" />
-        <Stat label="Trader-specific" value={rules.filter((r) => r.scope === "trader").length} />
+        <Stat label="Accounts" value={rules.length} />
+        <Stat label="Avg profit target" value={formatCurrency(avgTarget)} tone="long" />
+        <Stat label="Avg max drawdown" value={formatCurrency(avgDrawdown)} />
+        <Stat label="Enforcement" value="Live" tone="long" />
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        {rules.map((rule) => (
-          <Card key={rule.id} className={cn("p-4", !rule.enabled && "opacity-60")}>
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-semibold">{rule.name}</h3>
-                  <Badge tone={SCOPE_TONE[rule.scope]}>{rule.scope}</Badge>
-                </div>
-                <div className="mt-1 text-xs text-muted">
-                  {KIND_LABEL[rule.kind]} · target <span className="nums text-foreground">{rule.target}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => toggleRule(rule.id)}
-                role="switch"
-                aria-checked={rule.enabled}
-                className={cn(
-                  "relative h-6 w-11 shrink-0 rounded-full transition-colors",
-                  rule.enabled ? "bg-long" : "bg-surface-3",
-                )}
-              >
-                <span
-                  className={cn(
-                    "absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform",
-                    rule.enabled ? "translate-x-[22px]" : "translate-x-0.5",
-                  )}
-                />
-              </button>
-            </div>
-
-            <div className="mt-3 rounded-lg bg-surface-2 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-2">Value</div>
-              <div className="nums text-sm font-medium">{rule.value}</div>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between text-[11px] text-muted-2">
-              <span>Updated {formatDateTime(rule.updatedAt)}</span>
-              <span>by {rule.updatedBy}</span>
-            </div>
-          </Card>
-        ))}
-      </div>
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[820px] text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
+              <th className="px-4 py-2.5 font-medium">Account</th>
+              {FIELDS.map((f) => (
+                <th key={f.key} className="px-4 py-2.5 text-right font-medium">{f.label}</th>
+              ))}
+              <th className="px-4 py-2.5 text-right font-medium">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rules.map((r) => (
+              <RuleRow key={r.accountId} rule={r} onSave={(patch) => updateRule(r.accountId, patch)} />
+            ))}
+            {rules.length === 0 && (
+              <tr>
+                <td colSpan={FIELDS.length + 2} className="px-4 py-12 text-center text-sm text-muted">
+                  No accounts to show.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
     </div>
+  );
+}
+
+function RuleRow({ rule, onSave }: { rule: AccountRule; onSave: (patch: Editable) => Promise<void> }) {
+  const [vals, setVals] = useState<Editable>({
+    maxDailyLoss: rule.maxDailyLoss,
+    maxDrawdown: rule.maxDrawdown,
+    profitTarget: rule.profitTarget,
+    maxContracts: rule.maxContracts,
+  });
+  const [saving, setSaving] = useState(false);
+  const dirty = FIELDS.some((f) => vals[f.key] !== rule[f.key]);
+
+  async function save() {
+    setSaving(true);
+    await onSave(vals);
+    setSaving(false);
+  }
+
+  return (
+    <tr className="border-b border-border/60 hover:bg-surface-2">
+      <td className="px-4 py-2.5">
+        <div className="nums font-medium text-foreground">{rule.accountId}</div>
+        <div className="text-xs text-muted-2">{rule.traderName}</div>
+      </td>
+      {FIELDS.map((f) => (
+        <td key={f.key} className="px-4 py-2.5 text-right">
+          <div className="flex items-center justify-end gap-1">
+            {f.money && <span className="text-muted-2">$</span>}
+            <input
+              type="number"
+              min="0"
+              value={vals[f.key]}
+              onChange={(e) => setVals((v) => ({ ...v, [f.key]: Number(e.target.value) }))}
+              className="nums w-24 rounded-md border border-border bg-surface-2 px-2 py-1 text-right text-sm text-foreground focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+        </td>
+      ))}
+      <td className="px-4 py-2.5 text-right">
+        <Button size="sm" variant="secondary" loading={saving} disabled={!dirty || saving} onClick={save}>
+          Save
+        </Button>
+      </td>
+    </tr>
   );
 }

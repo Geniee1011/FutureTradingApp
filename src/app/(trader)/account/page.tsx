@@ -33,7 +33,8 @@ export default function AccountPage() {
 
   const { rule } = summary;
   const profitPct = clamp((summary.totalPnl / rule.profitTarget) * 100, 0, 100);
-  const dailyLossUsed = Math.max(0, -summary.realizedPnlToday);
+  // Equity-based day loss — the exact figure the engine enforces (includes unrealized).
+  const dailyLossUsed = Math.max(0, -summary.dailyPnl);
   const dailyLossPct = clamp((dailyLossUsed / rule.maxDailyLoss) * 100, 0, 100);
   const drawdownPct = clamp((summary.drawdown / rule.maxDrawdown) * 100, 0, 100);
 

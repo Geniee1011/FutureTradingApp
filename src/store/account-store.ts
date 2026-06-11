@@ -10,10 +10,14 @@ import { seedAccountSummary, seedTransactions } from "@/lib/mock/data";
 const API_BASE = WS_URL ? WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "") : "";
 
 interface AccountUpdate {
+  status: AccountSummary["status"];
   balance: number;
   equity: number;
   unrealizedPnl: number;
   realizedPnlToday: number;
+  dailyPnl: number;
+  totalPnl: number;
+  drawdown: number;
 }
 
 interface AccountState {
@@ -67,10 +71,14 @@ export const useAccountStore = create<AccountState>((set, get) => ({
         ? {
             summary: {
               ...s.summary,
+              status: u.status,
               balance: u.balance,
               equity: u.equity,
               unrealizedPnl: u.unrealizedPnl,
               realizedPnlToday: u.realizedPnlToday,
+              dailyPnl: u.dailyPnl,
+              totalPnl: u.totalPnl,
+              drawdown: u.drawdown,
             },
           }
         : s,
