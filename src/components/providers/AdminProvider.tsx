@@ -8,12 +8,14 @@ import { USE_MOCK_FEED } from "@/lib/constants";
 
 /** Seeds the admin CRM datasets, then keeps them live via the admin-updates channel. */
 export function AdminProvider({ children }: { children: React.ReactNode }) {
-  const seed = useAdminStore((s) => s.seed);
   const token = useAuthStore((s) => s.token);
 
+  // Reset + reseed when the logged-in user changes so one admin never sees
+  // another session's cached datasets.
   useEffect(() => {
-    seed();
-  }, [seed]);
+    useAdminStore.getState().reset();
+    useAdminStore.getState().seed();
+  }, [token]);
 
   // Live updates: the backend publishes `admin_update` on rule breaches, pass/fail,
   // and admin status changes. Re-pull the datasets when one arrives.

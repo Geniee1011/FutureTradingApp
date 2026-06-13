@@ -15,18 +15,20 @@ import { USE_MOCK_FEED } from "@/lib/constants";
  */
 export function TraderProvider({ children }: { children: React.ReactNode }) {
   const initMarket = useMarketStore((s) => s.init);
-  const seedOrders = useOrdersStore((s) => s.seed);
-  const seedAccount = useAccountStore((s) => s.seed);
   const token = useAuthStore((s) => s.token);
 
   const positions = useOrdersStore((s) => s.positions);
   const orders = useOrdersStore((s) => s.orders);
 
+  // Re-run when the logged-in user (token) changes: clear any prior user's cached
+  // book first so a new login never shows the previous account's positions/orders.
   useEffect(() => {
     initMarket();
-    seedOrders();
-    seedAccount();
-  }, [initMarket, seedOrders, seedAccount]);
+    useOrdersStore.getState().reset();
+    useAccountStore.getState().reset();
+    useOrdersStore.getState().seed();
+    useAccountStore.getState().seed();
+  }, [initMarket, token]);
 
   // Keep quotes flowing for every held position so its P&L stays live, even
   // when it isn't the selected symbol (the watchlist used to cover this).

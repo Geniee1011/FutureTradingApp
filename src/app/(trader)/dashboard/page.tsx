@@ -6,7 +6,8 @@ import { useAccountStore } from "@/store/account-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useMarketStore } from "@/store/market-store";
 import { useAuthStore, getAuthToken } from "@/store/auth-store";
-import { WS_URL, USE_MOCK_FEED } from "@/lib/constants";
+import { WS_URL, USE_MOCK_FEED, getMultiplier, getMargin } from "@/lib/constants";
+import { formatCurrency, clamp } from "@/lib/utils";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
@@ -15,7 +16,6 @@ import { PositionsTable } from "@/components/trade/PositionsTable";
 import { OrdersTable } from "@/components/trade/OrdersTable";
 import { EquityChart } from "@/components/chart/EquityChart";
 import { seedEquityCurve } from "@/lib/mock/data";
-import { formatCurrency } from "@/lib/utils";
 
 const API_BASE = WS_URL ? WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "") : "";
 
@@ -58,10 +58,14 @@ export default function DashboardPage() {
   const unrealized = positions.reduce((acc, p) => {
     const mark = quotes[p.symbol]?.price ?? p.markPrice;
     const dir = p.side === "buy" ? 1 : -1;
-    return acc + (mark - p.avgPrice) * p.quantity * dir;
+    return acc + (mark - p.avgPrice) * p.quantity * dir * getMultiplier(p.symbol);
   }, 0);
 
   const equity = (summary?.balance ?? 0) + unrealized;
+  // Margin held against open positions, and what's free to open more.
+  const usedMargin = positions.reduce((acc, p) => acc + p.quantity * getMargin(p.symbol), 0);
+  const availableMargin = equity - usedMargin;
+  const profitPct = summary ? clamp((summary.totalPnl / summary.rule.profitTarget) * 100, 0, 100) : 0;
 
   return (
     <div>
@@ -94,6 +98,27 @@ export default function DashboardPage() {
           tone={(summary?.totalPnl ?? 0) >= 0 ? "long" : "short"}
           hint={summary ? `Target ${formatCurrency(summary.rule.profitTarget)}` : ""}
         />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Stat
+          label="Available margin"
+          value={formatCurrency(Math.max(0, availableMargin))}
+          tone={availableMargin <= 0 ? "short" : undefined}
+          hint={`Used ${formatCurrency(usedMargin)}`}
+        />
+        <Stat
+          label="Daily P&L"
+          value={formatCurrency(summary?.dailyPnl ?? 0)}
+          tone={(summary?.dailyPnl ?? 0) >= 0 ? "long" : "short"}
+          hint={summary ? `Loss limit ${formatCurrency(summary.rule.maxDailyLoss)}` : ""}
+        />
+        <Stat
+          label="Current drawdown"
+          value={formatCurrency(summary?.drawdown ?? 0)}
+          hint={summary ? `Max ${formatCurrency(summary.rule.maxDrawdown)}` : ""}
+        />
+        <Stat label="Profit target" value={`${Math.round(profitPct)}%`} tone="long" hint={summary ? formatCurrency(summary.rule.profitTarget) : ""} />
       </div>
 
       <div className="mt-4">

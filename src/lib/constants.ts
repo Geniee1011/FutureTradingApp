@@ -15,22 +15,32 @@ export const SESSION_COOKIE = "tp_session";
  * seed the mock feed and the click-to-trade ticket.
  */
 export const INSTRUMENTS: Instrument[] = [
-  { symbol: "ES", name: "E-mini S&P 500", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 7574 },
-  { symbol: "MES", name: "Micro E-mini S&P 500", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 7574 },
-  { symbol: "NQ", name: "E-mini Nasdaq-100", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 30264 },
-  { symbol: "MNQ", name: "Micro E-mini Nasdaq-100", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 30264 },
-  { symbol: "YM", name: "E-mini Dow ($5)", category: "Equity Index", pricePrecision: 0, tickSize: 1, basePrice: 47000 },
-  { symbol: "MYM", name: "Micro E-mini Dow ($0.50)", category: "Equity Index", pricePrecision: 0, tickSize: 1, basePrice: 47000 },
-  { symbol: "CL", name: "Crude Oil (WTI)", category: "Energy", pricePrecision: 2, tickSize: 0.01, basePrice: 93 },
-  { symbol: "MCL", name: "Micro Crude Oil", category: "Energy", pricePrecision: 2, tickSize: 0.01, basePrice: 93 },
-  { symbol: "GC", name: "Gold", category: "Metals", pricePrecision: 1, tickSize: 0.1, basePrice: 4488 },
-  { symbol: "MGC", name: "Micro Gold", category: "Metals", pricePrecision: 1, tickSize: 0.1, basePrice: 4488 },
+  { symbol: "ES", name: "E-mini S&P 500", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 7574, multiplier: 50, marginPerContract: 13200 },
+  { symbol: "MES", name: "Micro E-mini S&P 500", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 7574, multiplier: 5, marginPerContract: 1320 },
+  { symbol: "NQ", name: "E-mini Nasdaq-100", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 30264, multiplier: 20, marginPerContract: 16500 },
+  { symbol: "MNQ", name: "Micro E-mini Nasdaq-100", category: "Equity Index", pricePrecision: 2, tickSize: 0.25, basePrice: 30264, multiplier: 2, marginPerContract: 1650 },
+  { symbol: "YM", name: "E-mini Dow ($5)", category: "Equity Index", pricePrecision: 0, tickSize: 1, basePrice: 47000, multiplier: 5, marginPerContract: 9900 },
+  { symbol: "MYM", name: "Micro E-mini Dow ($0.50)", category: "Equity Index", pricePrecision: 0, tickSize: 1, basePrice: 47000, multiplier: 0.5, marginPerContract: 990 },
+  { symbol: "CL", name: "Crude Oil (WTI)", category: "Energy", pricePrecision: 2, tickSize: 0.01, basePrice: 93, multiplier: 1000, marginPerContract: 6600 },
+  { symbol: "MCL", name: "Micro Crude Oil", category: "Energy", pricePrecision: 2, tickSize: 0.01, basePrice: 93, multiplier: 100, marginPerContract: 660 },
+  { symbol: "GC", name: "Gold", category: "Metals", pricePrecision: 1, tickSize: 0.1, basePrice: 4488, multiplier: 100, marginPerContract: 11000 },
+  { symbol: "MGC", name: "Micro Gold", category: "Metals", pricePrecision: 1, tickSize: 0.1, basePrice: 4488, multiplier: 10, marginPerContract: 1100 },
 ];
 
 export const DEFAULT_SYMBOL = "ES";
 
 export function getInstrument(symbol: string): Instrument | undefined {
   return INSTRUMENTS.find((i) => i.symbol === symbol);
+}
+
+/** Contract point value in USD for a symbol (defaults to 1 for unknown symbols). */
+export function getMultiplier(symbol: string): number {
+  return INSTRUMENTS.find((i) => i.symbol === symbol)?.multiplier ?? 1;
+}
+
+/** Intraday margin (USD) required to hold one contract of a symbol. */
+export function getMargin(symbol: string): number {
+  return INSTRUMENTS.find((i) => i.symbol === symbol)?.marginPerContract ?? 0;
 }
 
 /* ------------------------------- Nav ------------------------------ */
@@ -52,5 +62,6 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/admin/traders", label: "Traders", icon: "users" },
   { href: "/admin/accounts", label: "Accounts", icon: "account" },
   { href: "/admin/rules", label: "Rules", icon: "rules" },
+  { href: "/admin/violations", label: "Violations", icon: "alert" },
   { href: "/admin/activity", label: "Activity", icon: "activity" },
 ];

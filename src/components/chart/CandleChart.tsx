@@ -57,7 +57,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [loading, setLoading] = useState(true);
   const [ticket, setTicket] = useState<ChartTicket | null>(null);
   const [qty, setQty] = useState(1);
+  const [slInput, setSlInput] = useState("");
+  const [tpInput, setTpInput] = useState("");
   const [placed, setPlaced] = useState<string | null>(null);
+
+  // Clear the bracket inputs whenever the ticket closes.
+  useEffect(() => {
+    if (!ticket) {
+      setSlInput("");
+      setTpInput("");
+    }
+  }, [ticket]);
 
   const placeOrder = useOrdersStore((s) => s.placeOrder);
   const theme = useThemeStore((s) => s.theme);
@@ -252,8 +262,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const price = asMarket ? null : ticketPrice;
     const at = asMarket ? "MKT" : `${type.toUpperCase()} @ ${formatPrice(ticketPrice, precision)}`;
     const label = `${side === "buy" ? "Buy" : "Sell"} ${qty} ${symbol} ${at}`;
+    const stopLoss = slInput ? parseFloat(slInput) : null;
+    const takeProfit = tpInput ? parseFloat(tpInput) : null;
     setTicket(null);
-    const res = await placeOrder({ symbol, side, type, quantity: qty, price });
+    const res = await placeOrder({ symbol, side, type, quantity: qty, price, stopLoss, takeProfit });
     setPlaced(res.ok ? `✓ ${label}` : `✗ ${res.error ?? "Order rejected"}`);
     setTimeout(() => setPlaced(null), 3000);
   }
@@ -343,6 +355,26 @@ export function CandleChart({ symbol }: { symbol: string }) {
                     ×
                   </button>
                 </div>
+              </div>
+
+              {/* Optional bracket: SL / TP placed on entry fill. */}
+              <div className="grid grid-cols-2 gap-1">
+                <input
+                  value={slInput}
+                  onChange={(e) => setSlInput(e.target.value)}
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="SL"
+                  className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-foreground placeholder:text-muted-2 focus:border-primary/60 focus:outline-none"
+                />
+                <input
+                  value={tpInput}
+                  onChange={(e) => setTpInput(e.target.value)}
+                  type="number"
+                  inputMode="decimal"
+                  placeholder="TP"
+                  className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-foreground placeholder:text-muted-2 focus:border-primary/60 focus:outline-none"
+                />
               </div>
 
               <button

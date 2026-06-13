@@ -24,6 +24,8 @@ export interface Instrument {
   pricePrecision: number; // decimal places for price
   tickSize: number; // minimum price increment
   basePrice: number; // seed price used by the mock feed
+  multiplier: number; // contract point value in USD (P&L per 1.00 point × qty), e.g. ES=$50
+  marginPerContract: number; // USD margin required to hold one contract (intraday)
 }
 
 /** A live top-of-book quote / ticker snapshot. */
@@ -199,6 +201,71 @@ export interface AccountRule {
   maxDrawdown: number;
   profitTarget: number;
   maxContracts: number;
+  allowedInstruments: string[];
+}
+
+/* Single-trader detail (admin/traders/:id). */
+export interface TraderDetailAccount {
+  id: string;
+  startingBalance: number;
+  balance: number;
+  equity: number;
+  dailyPnl: number;
+  totalPnl: number;
+  drawdown: number;
+  highestEquity: number;
+  status: string;
+  currency: string;
+  createdAt: number;
+}
+export interface TraderDetailPosition {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  quantity: number;
+  averagePrice: number;
+  unrealizedPnl: number;
+  realizedPnl: number;
+}
+export interface TraderDetailOrder {
+  id: string;
+  symbol: string;
+  side: string;
+  type: string;
+  quantity: number;
+  filledQuantity: number;
+  requestedPrice: number | null;
+  fillPrice: number | null;
+  status: string;
+  reason: string | null;
+  createdAt: number;
+}
+export interface TraderViolation {
+  id: string;
+  ts: number;
+  type: string;
+  action: string;
+  detail: string | null;
+}
+export interface TraderDetail {
+  trader: TraderRecord;
+  account: TraderDetailAccount | null;
+  rule: EvalRule | null;
+  positions: TraderDetailPosition[];
+  orders: TraderDetailOrder[];
+  violations: TraderViolation[];
+  activity: ActivityEvent[];
+}
+
+/** A rule violation in the admin Violations list (joined with the trader). */
+export interface AdminViolation {
+  id: string;
+  ts: number;
+  traderId: string;
+  traderName: string;
+  accountId: string;
+  type: string; // e.g. DAILY_LOSS_EXCEEDED
+  action: string; // e.g. LIQUIDATE_POSITION
+  detail: string | null;
 }
 
 export type ActivitySeverity = "info" | "warning" | "critical";

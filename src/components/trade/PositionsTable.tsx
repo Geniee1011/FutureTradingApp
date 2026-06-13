@@ -45,7 +45,7 @@ export function PositionsTable() {
             const precision = inst?.pricePrecision ?? 2;
             const mark = quotes[p.symbol]?.price ?? p.markPrice;
             const dir = p.side === "buy" ? 1 : -1;
-            const pnl = (mark - p.avgPrice) * p.quantity * dir;
+            const pnl = (mark - p.avgPrice) * p.quantity * dir * (inst?.multiplier ?? 1);
             const pnlPct = ((mark - p.avgPrice) / p.avgPrice) * 100 * dir;
             return (
               <tr key={p.symbol} className="border-b border-border/60 hover:bg-surface-2">

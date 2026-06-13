@@ -17,6 +17,8 @@ export interface PlaceOrderInput {
   quantity: number;
   price?: number | null;
   timeInForce?: TimeInForce;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 
 interface OrdersState {
@@ -25,6 +27,8 @@ interface OrdersState {
   seeded: boolean;
 
   seed: () => void;
+  /** Clear the book (on logout / user switch) so the next user loads fresh. */
+  reset: () => void;
   placeOrder: (input: PlaceOrderInput) => Promise<{ ok: boolean; order?: Order; error?: string }>;
   closePosition: (symbol: string) => Promise<{ ok: boolean; error?: string }>;
   cancelOrder: (id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -81,6 +85,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     })();
   },
 
+  reset: () => set({ orders: [], positions: [], seeded: false }),
+
   placeOrder: async (input) => {
     const inst = getInstrument(input.symbol);
     if (!inst) return { ok: false, error: "Unknown instrument." };
@@ -101,6 +107,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
             type: input.type,
             quantity: input.quantity,
             price: input.price ?? null,
+            stopLoss: input.stopLoss ?? null,
+            takeProfit: input.takeProfit ?? null,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
@@ -137,6 +145,29 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
 
     set((s) => ({ orders: [order, ...s.orders] }));
     if (isMarket) get().applyFill(order);
+
+    // Mock bracket: show the opposing SL/TP legs as working orders.
+    if (isMarket && (input.stopLoss != null || input.takeProfit != null)) {
+      const exitSide: Side = input.side === "buy" ? "sell" : "buy";
+      const leg = (t: OrderType, px: number): Order => ({
+        id: `ORD-${(orderSeq++).toString()}`,
+        symbol: input.symbol,
+        side: exitSide,
+        type: t,
+        status: "open",
+        quantity: input.quantity,
+        filledQuantity: 0,
+        price: round(px, inst.pricePrecision),
+        avgFillPrice: null,
+        timeInForce: "GTC",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const legs: Order[] = [];
+      if (input.stopLoss != null) legs.push(leg("stop", input.stopLoss));
+      if (input.takeProfit != null) legs.push(leg("limit", input.takeProfit));
+      set((s) => ({ orders: [...legs, ...s.orders] }));
+    }
     return { ok: true, order };
   },
 

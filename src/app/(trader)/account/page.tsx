@@ -28,6 +28,7 @@ export default function AccountPage() {
   const user = useAuthStore((s) => s.user);
   const summary = useAccountStore((s) => s.summary);
   const transactions = useAccountStore((s) => s.transactions);
+  const violations = useAccountStore((s) => s.violations);
 
   if (!summary) return null;
 
@@ -136,6 +137,50 @@ export default function AccountPage() {
                   <tr>
                     <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted">
                       No transactions yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {/* Rule violations — the trader's own breach history / status */}
+        <Card className="overflow-hidden lg:col-span-3">
+          <CardHeader
+            title="Rule violations"
+            subtitle="Breaches of your evaluation rules"
+            action={
+              <Badge tone={violations.length ? "short" : "long"}>
+                {violations.length ? `${violations.length} on record` : "Good standing"}
+              </Badge>
+            }
+          />
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
+                  <th className="px-4 py-2.5 font-medium">Date</th>
+                  <th className="px-4 py-2.5 font-medium">Rule</th>
+                  <th className="px-4 py-2.5 font-medium">Action taken</th>
+                  <th className="px-4 py-2.5 font-medium">Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {violations.map((v) => (
+                  <tr key={v.id} className="border-b border-border/60 hover:bg-surface-2">
+                    <td className="nums px-4 py-2.5 text-muted">{formatDateTime(v.ts)}</td>
+                    <td className="px-4 py-2.5">
+                      <Badge tone="short">{v.type.replace(/_/g, " ").toLowerCase()}</Badge>
+                    </td>
+                    <td className="px-4 py-2.5 text-muted">{v.action.replace(/_/g, " ").toLowerCase()}</td>
+                    <td className="px-4 py-2.5 text-muted">{v.detail ?? "—"}</td>
+                  </tr>
+                ))}
+                {violations.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted">
+                      No violations — your account is in good standing.
                     </td>
                   </tr>
                 )}

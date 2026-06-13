@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useAdminStore } from "@/store/admin-store";
 import type { KycStatus, TraderRecord, TraderStatus } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -40,10 +41,10 @@ export default function TradersPage() {
       header: "Trader",
       sortValue: (t) => t.name,
       cell: (t) => (
-        <div>
+        <Link href={`/admin/traders/${t.id}`} className="block hover:underline">
           <div className="font-medium text-foreground">{t.name}</div>
           <div className="text-xs text-muted-2">{t.email}</div>
-        </div>
+        </Link>
       ),
     },
     { key: "country", header: "Country", sortValue: (t) => t.country, cell: (t) => <span className="text-muted">{t.country}</span> },
@@ -107,16 +108,24 @@ export default function TradersPage() {
       key: "actions",
       header: "",
       align: "right",
-      cell: (t) =>
-        t.status === "active" ? (
-          <Button variant="danger" size="sm" onClick={() => setStatus(t.id, "suspended")}>
-            Suspend
-          </Button>
-        ) : (
-          <Button variant="secondary" size="sm" onClick={() => setStatus(t.id, "active")}>
-            Activate
-          </Button>
-        ),
+      cell: (t) => (
+        <div className="flex items-center justify-end gap-2">
+          <Link href={`/admin/traders/${t.id}`}>
+            <Button variant="secondary" size="sm">
+              View
+            </Button>
+          </Link>
+          {t.status === "active" ? (
+            <Button variant="danger" size="sm" onClick={() => setStatus(t.id, "suspended")}>
+              Suspend
+            </Button>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={() => setStatus(t.id, "active")}>
+              Activate
+            </Button>
+          )}
+        </div>
+      ),
     },
   ];
 

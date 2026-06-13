@@ -11,6 +11,7 @@ import type {
   AccountSummary,
   ActivityEvent,
   AdminAccount,
+  AdminViolation,
   Order,
   OrderStatus,
   Position,
@@ -87,7 +88,7 @@ export function seedPositions(): Position[] {
     const avgPrice = inst.basePrice * (1 + (rng() - 0.5) * 0.05);
     const markPrice = inst.basePrice * (1 + (rng() - 0.5) * 0.04);
     const dir = side === "buy" ? 1 : -1;
-    const unrealized = (markPrice - avgPrice) * qty * dir;
+    const unrealized = (markPrice - avgPrice) * qty * dir * inst.multiplier;
     return {
       symbol,
       side,
@@ -261,6 +262,8 @@ export function seedRules(): AccountRule[] {
       maxDrawdown: pick(rng, [2500, 3000, 4000] as const),
       profitTarget: pick(rng, [5000, 6000, 9000] as const),
       maxContracts: pick(rng, [3, 5, 10] as const),
+      // Most accounts trade everything; some are restricted to equity-index futures.
+      allowedInstruments: rng() > 0.35 ? INSTRUMENTS.map((x) => x.symbol) : ["ES", "MES", "NQ", "MNQ"],
     };
   });
 }
@@ -291,6 +294,37 @@ export function seedActivity(count = 40): ActivityEvent[] {
       target: a.target,
       severity: a.severity,
       ip: `${10 + Math.floor(rng() * 240)}.${Math.floor(rng() * 255)}.${Math.floor(rng() * 255)}.${Math.floor(rng() * 255)}`,
+    });
+  }
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+const VIOLATION_DETAIL: Record<string, string> = {
+  DAILY_LOSS_EXCEEDED: "Daily loss -$2,740 exceeded limit -$2,500",
+  MAX_DRAWDOWN_BREACHED: "Drawdown $3,180 breached max $3,000",
+  CONTRACT_LIMIT_EXCEEDED: "Order size 8 exceeds max 5 contracts",
+  RESTRICTED_INSTRUMENT: "Attempted CL — not in allowed instruments",
+};
+
+export function seedViolations(traders: TraderRecord[], count = 14): AdminViolation[] {
+  if (traders.length === 0) return [];
+  const rng = makeRng(404);
+  const types = ["DAILY_LOSS_EXCEEDED", "MAX_DRAWDOWN_BREACHED", "CONTRACT_LIMIT_EXCEEDED", "RESTRICTED_INSTRUMENT"] as const;
+  const liqActions = ["LIQUIDATE_POSITION", "SUSPEND_ACCOUNT"] as const;
+  const out: AdminViolation[] = [];
+  for (let i = 0; i < count; i++) {
+    const tr = pick(rng, traders);
+    const type = pick(rng, types);
+    const action = type === "CONTRACT_LIMIT_EXCEEDED" || type === "RESTRICTED_INSTRUMENT" ? "REJECT_ORDER" : pick(rng, liqActions);
+    out.push({
+      id: `VIO-${90000 + i}`,
+      ts: NOW - i * 2 * HOUR - Math.floor(rng() * HOUR),
+      traderId: tr.id,
+      traderName: tr.name,
+      accountId: `ACC-${100000 + (i % 6)}`,
+      type,
+      action,
+      detail: VIOLATION_DETAIL[type],
     });
   }
   return out.sort((a, b) => b.ts - a.ts);
