@@ -5,6 +5,8 @@ import type {
   AccountRule,
   ActivityEvent,
   AdminAccount,
+  AdminClosedPosition,
+  AdminOpenPosition,
   AdminViolation,
   EvalRule,
   TraderDetail,
@@ -50,6 +52,10 @@ interface AdminState {
   closeAllPositions: (accountId: string) => Promise<AdminActionResult>;
   liquidateAccount: (accountId: string) => Promise<AdminActionResult>;
   cancelOrders: (accountId: string) => Promise<AdminActionResult>;
+  /** Set a new password for a trader (operates on a user/trader id). */
+  resetPassword: (userId: string, newPassword: string) => Promise<AdminActionResult>;
+  /** All open + closed positions across every account (admin-wide Positions view). */
+  getAllPositions: () => Promise<{ open: AdminOpenPosition[]; closed: AdminClosedPosition[] }>;
 }
 
 export interface AdminActionResult {
@@ -272,5 +278,29 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       return r;
     }
     return { ok: true, cancelled: 0 };
+  },
+
+  resetPassword: async (userId, newPassword) => {
+    const token = live();
+    if (!token) return { ok: false, error: "Admin actions require the backend (not available in demo mode)." };
+    const res = await fetch(`${API_BASE}/api/admin/traders/${userId}/password`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ newPassword }),
+    }).catch(() => null);
+    if (!res) return { ok: false, error: "network error" };
+    const data = (await res.json().catch(() => ({}))) as AdminActionResult;
+    return res.ok ? { ...data, ok: true } : { ok: false, error: data.error ?? "Could not reset password." };
+  },
+
+  getAllPositions: async () => {
+    const token = live();
+    if (!token) return { open: [], closed: [] };
+    const res = await fetch(`${API_BASE}/api/admin/positions`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+    if (!res || !res.ok) return { open: [], closed: [] };
+    return (await res.json().catch(() => ({ open: [], closed: [] }))) as {
+      open: AdminOpenPosition[];
+      closed: AdminClosedPosition[];
+    };
   },
 }));

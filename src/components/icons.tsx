@@ -119,6 +119,18 @@ export const Icons = {
       <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
     </svg>
   ),
+  eye: (p: IconProps) => (
+    <svg {...base(p)}>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ),
+  eyeOff: (p: IconProps) => (
+    <svg {...base(p)}>
+      <path d="M9.9 5.1A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a18.4 18.4 0 0 1-3.2 4.2M6.5 6.5C3.6 8.2 2 12 2 12s3.5 7 10 7a10.4 10.4 0 0 0 4.5-1M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+      <path d="M3 3l18 18" />
+    </svg>
+  ),
 } satisfies Record<string, (p: IconProps) => React.ReactNode>;
 
 export type IconName = keyof typeof Icons;

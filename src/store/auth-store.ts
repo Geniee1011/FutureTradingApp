@@ -40,6 +40,7 @@ interface AuthState {
     email: string,
     password: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   setHydrated: () => void;
 }
@@ -52,7 +53,7 @@ interface AuthState {
  */
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       token: null,
       hydrated: false,
@@ -76,11 +77,18 @@ export const useAuthStore = create<AuthState>()(
             if (res.status === 401) return { ok: false, error: "Invalid email or password." };
             return { ok: false, error: "Login failed. Please try again." };
           } catch {
-            // Backend unreachable — fall through to the demo users below.
+            // A backend IS configured but is unreachable. Do NOT silently fall
+            // through to demo users — that would masquerade as a working login
+            // while the real backend is down. Fail loudly instead. (To run the
+            // offline demo, unset NEXT_PUBLIC_WS_URL so USE_MOCK_FEED is true.)
+            return {
+              ok: false,
+              error: "Can't reach the server. Check that the backend is running and try again.",
+            };
           }
         }
 
-        // 2) Demo fallback (no backend / offline).
+        // 2) Demo fallback — only when no backend is configured (offline build).
         await new Promise((r) => setTimeout(r, 300));
         const match = DEMO_USERS.find(
           (u) => u.email.toLowerCase() === email.trim().toLowerCase() && u.password === password,
@@ -109,6 +117,27 @@ export const useAuthStore = create<AuthState>()(
           if (res.ok) return { ok: true };
           const data = (await res.json().catch(() => ({}))) as { error?: string };
           return { ok: false, error: data.error ?? "Registration failed. Please try again." };
+        } catch {
+          return { ok: false, error: "Could not reach the server. Please try again." };
+        }
+      },
+
+      // Self-service password change for the signed-in user (trader or admin).
+      changePassword: async (currentPassword, newPassword) => {
+        if (USE_MOCK_FEED || !API_BASE) {
+          return { ok: false, error: "Changing your password requires the backend (demo mode is read-only)." };
+        }
+        const token = get().token;
+        if (!token) return { ok: false, error: "You must be signed in." };
+        try {
+          const res = await fetch(`${API_BASE}/api/auth/change-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ currentPassword, newPassword }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+          if (res.ok && data.ok) return { ok: true };
+          return { ok: false, error: data.error ?? "Could not change password." };
         } catch {
           return { ok: false, error: "Could not reach the server. Please try again." };
         }

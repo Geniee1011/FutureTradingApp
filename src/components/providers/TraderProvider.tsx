@@ -5,6 +5,7 @@ import { useMarketStore } from "@/store/market-store";
 import { useOrdersStore } from "@/store/orders-store";
 import { useAccountStore } from "@/store/account-store";
 import { useAuthStore } from "@/store/auth-store";
+import { useMarketDataStore, isByoMode } from "@/store/market-data-store";
 import { getWsClient } from "@/lib/ws-client";
 import { USE_MOCK_FEED } from "@/lib/constants";
 
@@ -22,17 +23,29 @@ export function TraderProvider({ children }: { children: React.ReactNode }) {
 
   // Re-run when the logged-in user (token) changes: clear any prior user's cached
   // book first so a new login never shows the previous account's positions/orders.
+  // Load the market-data connection status FIRST so the feed inits in the right
+  // mode (shared WS vs Model B per-user polling).
   useEffect(() => {
-    initMarket();
-    useOrdersStore.getState().reset();
-    useAccountStore.getState().reset();
-    useOrdersStore.getState().seed();
-    useAccountStore.getState().seed();
+    let active = true;
+    void (async () => {
+      await useMarketDataStore.getState().refresh();
+      if (!active) return;
+      initMarket();
+      useOrdersStore.getState().reset();
+      useAccountStore.getState().reset();
+      useOrdersStore.getState().seed();
+      useAccountStore.getState().seed();
+    })();
+    return () => {
+      active = false;
+    };
   }, [initMarket, token]);
 
   // Keep quotes flowing for every held position so its P&L stays live, even
-  // when it isn't the selected symbol (the watchlist used to cover this).
+  // when it isn't the selected symbol. Skipped in Model B (no shared feed — a
+  // position's live P&L there comes from the server's account/position pushes).
   useEffect(() => {
+    if (isByoMode()) return;
     const ws = getWsClient();
     for (const p of positions) ws.subscribe("quotes", p.symbol);
   }, [positions]);
@@ -40,6 +53,7 @@ export function TraderProvider({ children }: { children: React.ReactNode }) {
   // Likewise for working limit/stop orders: the backend triggers them off the
   // live mark, so their symbols need a quote feed or they'd never fill.
   useEffect(() => {
+    if (isByoMode()) return;
     const ws = getWsClient();
     for (const o of orders) {
       if (o.status === "open" || o.status === "partial") ws.subscribe("quotes", o.symbol);

@@ -125,3 +125,10 @@
 .flash-down {
   animation: flash-down 0.6s ease-out;
 }
+
+/* Hide the browsers' built-in password reveal/clear controls — we render our own
+   consistent show/hide toggle (PasswordInput). Edge/IE add these by default. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}

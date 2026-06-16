@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createDatafeed } from "./datafeed";
 import { CandleChart } from "../CandleChart";
+import { useMarketDataStore } from "@/store/market-data-store";
+import { ConnectDatabentoModal } from "@/components/layout/ConnectDatabentoModal";
+import { Button } from "@/components/ui/Button";
 
 /**
  * Renders the TradingView Charting Library widget when it is available in
@@ -17,6 +20,13 @@ export function AdvancedChart({ symbol }: { symbol: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<TradingViewWidgetInstance | null>(null);
   const [useFallback, setUseFallback] = useState(!ADVANCED_ENABLED);
+
+  // Model B: gate the chart until the user connects their own Databento account.
+  const mode = useMarketDataStore((s) => s.mode);
+  const connected = useMarketDataStore((s) => s.connected);
+  const loaded = useMarketDataStore((s) => s.loaded);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const needsKey = mode === "byo" && loaded && !connected;
 
   useEffect(() => {
     if (!ADVANCED_ENABLED || !containerRef.current) return;
@@ -63,6 +73,21 @@ export function AdvancedChart({ symbol }: { symbol: string }) {
       widgetRef.current = null;
     };
   }, [symbol]);
+
+  if (needsKey) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center">
+        <div className="text-sm font-semibold text-foreground">Connect your Databento account</div>
+        <p className="max-w-sm text-xs text-muted">
+          This portal streams charts from your own Databento data. Connect your account to view {symbol} and trade.
+        </p>
+        <Button size="sm" onClick={() => setConnectOpen(true)}>
+          Connect Databento
+        </Button>
+        {connectOpen && <ConnectDatabentoModal onClose={() => setConnectOpen(false)} />}
+      </div>
+    );
+  }
 
   if (useFallback) return <CandleChart symbol={symbol} />;
   return <div ref={containerRef} className="h-full w-full" />;

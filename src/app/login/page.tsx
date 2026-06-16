@@ -4,9 +4,9 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/auth-store";
-import { DEMO_USERS } from "@/lib/mock/data";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Field";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { Icon } from "@/components/icons";
 
 function LoginForm() {
@@ -35,13 +35,6 @@ function LoginForm() {
     router.replace(next && !next.startsWith("/login") ? next : home);
   }
 
-  function fill(role: "trader" | "admin") {
-    const u = DEMO_USERS.find((d) => d.role === role)!;
-    setEmail(u.email);
-    setPassword(u.password);
-    setError(null);
-  }
-
   return (
     <form onSubmit={submit} className="space-y-4">
       {registered && (
@@ -60,8 +53,7 @@ function LoginForm() {
         />
       </Field>
       <Field label="Password">
-        <Input
-          type="password"
+        <PasswordInput
           autoComplete="current-password"
           placeholder="••••••••"
           value={password}
@@ -77,29 +69,6 @@ function LoginForm() {
       <Button type="submit" size="lg" loading={loading} className="w-full">
         Sign in
       </Button>
-
-      <div className="rounded-lg border border-border bg-surface-2 p-3">
-        <div className="mb-2 text-xs font-medium text-muted">Demo accounts — click to fill</div>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => fill("trader")}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-left text-xs hover:border-primary/50"
-          >
-            <div className="font-medium text-foreground">Trader</div>
-            <div className="text-muted-2">trader@demo.com</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => fill("admin")}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-left text-xs hover:border-long/50"
-          >
-            <div className="font-medium text-foreground">Admin</div>
-            <div className="text-muted-2">admin@demo.com</div>
-          </button>
-        </div>
-        <div className="mt-2 text-[11px] text-muted-2">Password for both: <span className="nums">demo</span></div>
-      </div>
 
       <div className="text-center text-sm text-muted">
         Don&apos;t have an account?{" "}

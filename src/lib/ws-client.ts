@@ -10,6 +10,7 @@
  * ------------------------------------------------------------------ */
 
 import { USE_MOCK_FEED, WS_URL } from "./constants";
+import { getAuthToken } from "@/store/auth-store";
 import { getMockFeed, MockFeed } from "./mock/feed";
 import type {
   Candle,
@@ -150,10 +151,14 @@ class WSClient {
     if (USE_MOCK_FEED || this.mock) {
       return getMockFeed().getHistory(symbol, resolutionSec, count);
     }
-    // Real backend: fetch via REST history endpoint.
+    // Real backend: fetch via REST history endpoint. Send the auth token — Model B
+    // (byo) serves history from the user's OWN key and requires it (shared mode
+    // ignores it).
     const base = WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "");
+    const token = getAuthToken();
     const res = await fetch(
       `${base}/api/history?symbol=${encodeURIComponent(symbol)}&resolution=${resolutionSec}&count=${count}`,
+      token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
     );
     if (!res.ok) throw new Error(`history ${res.status}`);
     return (await res.json()) as Candle[];

@@ -4,14 +4,21 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/auth-store";
+import { useMarketDataStore } from "@/store/market-data-store";
 import { Icon } from "@/components/icons";
 import { cn } from "@/lib/utils";
+import { ChangePasswordModal } from "@/components/layout/ChangePasswordModal";
+import { ConnectDatabentoModal } from "@/components/layout/ConnectDatabentoModal";
 
 export function UserMenu() {
   const router = useRouter();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const byo = useMarketDataStore((s) => s.mode === "byo");
+  const dbConnected = useMarketDataStore((s) => s.connected);
   const [open, setOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [dbOpen, setDbOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -65,6 +72,31 @@ export function UserMenu() {
               <MenuLink href="/account" label="Account settings" icon="account" />
             )}
             {user.role === "admin" && <MenuLink href="/dashboard" label="Trader portal" icon="dashboard" />}
+            {byo && (
+              <button
+                onClick={() => {
+                  setOpen(false);
+                  setDbOpen(true);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground hover:bg-surface-3"
+              >
+                <Icon name="trade" width={16} height={16} className="text-muted" />
+                <span className="flex-1 text-left">Databento account</span>
+                <span className={cn("text-[10px] font-medium", dbConnected ? "text-long" : "text-muted-2")}>
+                  {dbConnected ? "connected" : "not connected"}
+                </span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setOpen(false);
+                setPwOpen(true);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground hover:bg-surface-3"
+            >
+              <Icon name="account" width={16} height={16} className="text-muted" />
+              Change password
+            </button>
             <button
               onClick={handleLogout}
               className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-short hover:bg-short/10"
@@ -75,6 +107,9 @@ export function UserMenu() {
           </div>
         </div>
       )}
+
+      {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
+      {dbOpen && <ConnectDatabentoModal onClose={() => setDbOpen(false)} />}
     </div>
   );
 }

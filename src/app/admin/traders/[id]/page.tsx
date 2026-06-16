@@ -54,12 +54,14 @@ export default function TraderDetailPage() {
   const closeAllPositions = useAdminStore((s) => s.closeAllPositions);
   const liquidateAccount = useAdminStore((s) => s.liquidateAccount);
   const cancelOrders = useAdminStore((s) => s.cancelOrders);
+  const resetPassword = useAdminStore((s) => s.resetPassword);
   const seeded = useAdminStore((s) => s.seeded);
 
   const [detail, setDetail] = useState<TraderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [amount, setAmount] = useState("");
+  const [newPw, setNewPw] = useState("");
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -253,6 +255,33 @@ export default function TraderDetailPage() {
                 Apply
               </Button>
             </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="w-56">
+                <label className="mb-1 block text-xs text-muted">Reset password (min 6 chars)</label>
+                <Input
+                  type="text"
+                  autoComplete="off"
+                  value={newPw}
+                  onChange={(e) => setNewPw(e.target.value)}
+                  placeholder="new password for this trader"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={actionBusy === "password"}
+                disabled={newPw.length < 6}
+                onClick={() =>
+                  runAction(
+                    "password",
+                    () => resetPassword(trader.id, newPw).then((r) => { if (r.ok) setNewPw(""); return r; }),
+                    `Reset ${trader.name}'s password? They'll need the new password to sign in. Make sure to share it with them securely.`,
+                  )
+                }
+              >
+                Reset password
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary" size="sm" loading={actionBusy === "close"} disabled={positions.length === 0} onClick={() => runAction("close", () => closeAllPositions(account.id))}>
                 Close all positions
@@ -380,6 +409,8 @@ function actionSuccess(key: string, r: AdminActionResult): string {
       return `✓ Liquidated ${r.closed ?? 0} position(s) — account suspended`;
     case "reset":
       return "✓ Challenge reset to starting state";
+    case "password":
+      return "✓ Password reset — share the new password with the trader";
     default:
       return "✓ Done";
   }

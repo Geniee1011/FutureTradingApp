@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuthStore } from "@/store/auth-store";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Field";
+import { PasswordInput } from "@/components/ui/PasswordInput";
 import { Icon } from "@/components/icons";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -76,8 +77,7 @@ export default function RegisterPage() {
               />
             </Field>
             <Field label="Password">
-              <Input
-                type="password"
+              <PasswordInput
                 autoComplete="new-password"
                 placeholder="At least 6 characters"
                 value={password}
@@ -86,8 +86,7 @@ export default function RegisterPage() {
               />
             </Field>
             <Field label="Confirm password">
-              <Input
-                type="password"
+              <PasswordInput
                 autoComplete="new-password"
                 placeholder="Re-enter your password"
                 value={confirm}

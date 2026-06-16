@@ -268,6 +268,37 @@ export interface AdminViolation {
   detail: string | null;
 }
 
+/** An open position across any account (admin-wide Positions view). */
+export interface AdminOpenPosition {
+  id: string;
+  traderId: string;
+  traderName: string;
+  accountId: string;
+  symbol: string;
+  side: string; // LONG | SHORT
+  quantity: number;
+  averagePrice: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  openedAt: number;
+}
+
+/** A closed/reduced position across any account (admin-wide Positions view). */
+export interface AdminClosedPosition {
+  id: string;
+  traderId: string;
+  traderName: string;
+  accountId: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+  openedAt: number;
+  closedAt: number;
+}
+
 export type ActivitySeverity = "info" | "warning" | "critical";
 
 export interface ActivityEvent {
