@@ -97,10 +97,6 @@ export default function LoginPage() {
             <LoginForm />
           </Suspense>
         </div>
-
-        <p className="mt-4 text-center text-xs text-muted-2">
-          Protected area · Unauthorized access is monitored
-        </p>
       </div>
     </div>
   );
