@@ -152,36 +152,71 @@ export function CandleChart({ symbol }: { symbol: string }) {
   }, [theme]);
 
   // Load history whenever symbol/resolution changes.
+  //
+  // The backend may serve full history from a cache that warms in the background
+  // (its Historical-data hop can be slow/rate-limited from some hosts). So the
+  // FIRST response can be thin (live bars only); we re-poll a few times until the
+  // backfill lands, then stop. Each response still renders, so the chart is never
+  // blank and progressively fills in without the user touching anything.
   useEffect(() => {
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    let bestCount = 0;
+    let fitted = false;
     setLoading(true);
     setTicket(null);
-    getWsClient()
-      .getHistory(symbol, resolution, 240)
-      .then((candles) => {
-        if (cancelled || !candleRef.current || !volumeRef.current) return;
-        const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
-          time: c.time as UTCTimestamp,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        }));
-        const volData: HistogramData<UTCTimestamp>[] = candles.map((c) => ({
-          time: c.time as UTCTimestamp,
-          value: c.volume,
-          color: c.close >= c.open ? "#16c78455" : "#ea394355",
-        }));
-        candleRef.current.setData(candleData);
-        volumeRef.current.setData(volData);
-        lastCandleRef.current = candleData[candleData.length - 1] ?? null;
-        lastVolumeRef.current = volData[volData.length - 1] ?? null;
+
+    const render = (candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
+      if (!candleRef.current || !volumeRef.current) return;
+      const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
+        time: c.time as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }));
+      const volData: HistogramData<UTCTimestamp>[] = candles.map((c) => ({
+        time: c.time as UTCTimestamp,
+        value: c.volume,
+        color: c.close >= c.open ? "#16c78455" : "#ea394355",
+      }));
+      candleRef.current.setData(candleData);
+      volumeRef.current.setData(volData);
+      lastCandleRef.current = candleData[candleData.length - 1] ?? null;
+      lastVolumeRef.current = volData[volData.length - 1] ?? null;
+      // Only auto-fit once, so a later backfill doesn't yank a user's zoom/pan.
+      if (!fitted) {
         chartRef.current?.timeScale().fitContent();
+        fitted = true;
+      }
+    };
+
+    const poll = async () => {
+      attempt += 1;
+      const candles = await getWsClient()
+        .getHistory(symbol, resolution, 240)
+        .catch(() => [] as Awaited<ReturnType<ReturnType<typeof getWsClient>["getHistory"]>>);
+      if (cancelled) return;
+      // Only replace the series when this response is at least as complete as the
+      // best so far — avoids flicker if a retry briefly returns fewer bars.
+      if (candles.length && candles.length >= bestCount) {
+        bestCount = candles.length;
+        render(candles);
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      } else if (!candles.length && attempt === 1) {
+        setLoading(false); // nothing yet, but stop blocking the view
+      }
+      // Keep polling until we have a substantial backfill (or give up after ~40s).
+      if (bestCount < 60 && attempt < 9) {
+        timer = setTimeout(poll, attempt < 3 ? 2500 : 5000);
+      }
+    };
+
+    void poll();
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [symbol, resolution]);
 
