@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createChart,
   CandlestickSeries,
@@ -53,6 +53,11 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
   const lastVolumeRef = useRef<HistogramData<UTCTimestamp> | null>(null);
   const priceLineRef = useRef<IPriceLine | null>(null);
+  const slLineRef = useRef<IPriceLine | null>(null);
+  const tpLineRef = useRef<IPriceLine | null>(null);
+  const orderLinesRef = useRef<Map<string, IPriceLine>>(new Map());
+  const lastTagsRef = useRef<string>("");
+  const loadCleanupRef = useRef<(() => void) | null>(null);
   const [resolution, setResolution] = useState(60);
   const [loading, setLoading] = useState(true);
   const [ticket, setTicket] = useState<ChartTicket | null>(null);
@@ -60,6 +65,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [slInput, setSlInput] = useState("");
   const [tpInput, setTpInput] = useState("");
   const [placed, setPlaced] = useState<string | null>(null);
+  const [orderTags, setOrderTags] = useState<{ id: string; y: number; side: Side; label: string; right: number }[]>([]);
+  // Order labels dismissed from the chart (hidden ONLY — the orders stay active).
+  const [hiddenTagIds, setHiddenTagIds] = useState<Set<string>>(new Set());
 
   // Clear the bracket inputs whenever the ticket closes.
   useEffect(() => {
@@ -70,9 +78,22 @@ export function CandleChart({ symbol }: { symbol: string }) {
   }, [ticket]);
 
   const placeOrder = useOrdersStore((s) => s.placeOrder);
+  const allOrders = useOrdersStore((s) => s.orders);
   const theme = useThemeStore((s) => s.theme);
+
+  // Resting (working) limit/stop orders for this symbol — drawn on the chart as
+  // cancellable lines (DOM-style). Market orders fill instantly so never appear.
+  const openOrders = allOrders.filter(
+    (o) => o.symbol === symbol && (o.status === "open" || o.status === "partial") && o.price != null,
+  );
+  // Hidden orders are dropped entirely from the chart — no line, no axis label, no tag.
+  const visibleOrders = openOrders.filter((o) => !hiddenTagIds.has(o.id));
+  const visibleKey = visibleOrders
+    .map((o) => `${o.id}:${o.price}:${o.side}:${o.type}:${o.bracketRole ?? ""}`)
+    .join("|");
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
+  const tickSize = inst?.tickSize ?? 0.01;
   const round = (p: number) => Math.round(p * 10 ** precision) / 10 ** precision;
 
   // Build the chart once.
@@ -132,6 +153,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
       candleRef.current = null;
       volumeRef.current = null;
       priceLineRef.current = null;
+      slLineRef.current = null;
+      tpLineRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -151,74 +174,95 @@ export function CandleChart({ symbol }: { symbol: string }) {
     volumeRef.current?.applyOptions({ color: c.volume });
   }, [theme]);
 
-  // Load history whenever symbol/resolution changes.
-  //
-  // The backend may serve full history from a cache that warms in the background
-  // (its Historical-data hop can be slow/rate-limited from some hosts). So the
-  // FIRST response can be thin (live bars only); we re-poll a few times until the
-  // backfill lands, then stop. Each response still renders, so the chart is never
-  // blank and progressively fills in without the user touching anything.
+  // Load history for the current symbol/resolution, re-polling a few times until
+  // the backend's background cache warms (its Historical-data hop can be slow/
+  // rate-limited from some hosts). So the FIRST response can be thin (live bars
+  // only); each response still renders, so the chart is never blank and fills in
+  // on its own. `showSpinner` is true for the initial / symbol-change load and
+  // false for a silent refresh (e.g. backfilling after the tab regains focus).
+  const loadHistory = useCallback(
+    (showSpinner: boolean) => {
+      loadCleanupRef.current?.(); // cancel any in-flight load first
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let attempt = 0;
+      let bestCount = 0;
+      let fitted = !showSpinner; // only auto-fit on a spinner load — never yank the view on a silent refresh
+      if (showSpinner) setLoading(true);
+      setTicket(null);
+
+      const render = (candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
+        if (!candleRef.current || !volumeRef.current) return;
+        const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
+          time: c.time as UTCTimestamp,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+        }));
+        const volData: HistogramData<UTCTimestamp>[] = candles.map((c) => ({
+          time: c.time as UTCTimestamp,
+          value: c.volume,
+          color: c.close >= c.open ? "#16c78455" : "#ea394355",
+        }));
+        candleRef.current.setData(candleData);
+        volumeRef.current.setData(volData);
+        lastCandleRef.current = candleData[candleData.length - 1] ?? null;
+        lastVolumeRef.current = volData[volData.length - 1] ?? null;
+        if (!fitted) {
+          chartRef.current?.timeScale().fitContent();
+          fitted = true;
+        }
+      };
+
+      const poll = async () => {
+        attempt += 1;
+        const candles = await getWsClient()
+          .getHistory(symbol, resolution, 240)
+          .catch(() => [] as Awaited<ReturnType<ReturnType<typeof getWsClient>["getHistory"]>>);
+        if (cancelled) return;
+        // Only replace the series when this response is at least as complete as the
+        // best so far — avoids flicker if a retry briefly returns fewer bars.
+        if (candles.length && candles.length >= bestCount) {
+          bestCount = candles.length;
+          render(candles);
+          setLoading(false);
+        } else if (!candles.length && attempt === 1) {
+          setLoading(false); // nothing yet, but stop blocking the view
+        }
+        // Keep polling until we have a substantial backfill (or give up after ~40s).
+        if (bestCount < 60 && attempt < 9) {
+          timer = setTimeout(poll, attempt < 3 ? 2500 : 5000);
+        }
+      };
+
+      loadCleanupRef.current = () => {
+        cancelled = true;
+        if (timer) clearTimeout(timer);
+      };
+      void poll();
+    },
+    [symbol, resolution],
+  );
+
+  // Initial load + whenever symbol/resolution changes.
   useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let attempt = 0;
-    let bestCount = 0;
-    let fitted = false;
-    setLoading(true);
-    setTicket(null);
+    loadHistory(true);
+    return () => loadCleanupRef.current?.();
+  }, [loadHistory]);
 
-    const render = (candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
-      if (!candleRef.current || !volumeRef.current) return;
-      const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
-        time: c.time as UTCTimestamp,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      }));
-      const volData: HistogramData<UTCTimestamp>[] = candles.map((c) => ({
-        time: c.time as UTCTimestamp,
-        value: c.volume,
-        color: c.close >= c.open ? "#16c78455" : "#ea394355",
-      }));
-      candleRef.current.setData(candleData);
-      volumeRef.current.setData(volData);
-      lastCandleRef.current = candleData[candleData.length - 1] ?? null;
-      lastVolumeRef.current = volData[volData.length - 1] ?? null;
-      // Only auto-fit once, so a later backfill doesn't yank a user's zoom/pan.
-      if (!fitted) {
-        chartRef.current?.timeScale().fitContent();
-        fitted = true;
-      }
+  // Backfill the gap when returning to a backgrounded tab. Browsers throttle (or
+  // pause) the quote-poll timer while the tab is hidden, so no candles form for
+  // those minutes and the chart shows empty spaces. On regaining visibility,
+  // silently re-pull history so the series is continuous again; the live quote
+  // poll also resumes (and the backend re-creates the user's live session).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadHistory(false);
     };
-
-    const poll = async () => {
-      attempt += 1;
-      const candles = await getWsClient()
-        .getHistory(symbol, resolution, 240)
-        .catch(() => [] as Awaited<ReturnType<ReturnType<typeof getWsClient>["getHistory"]>>);
-      if (cancelled) return;
-      // Only replace the series when this response is at least as complete as the
-      // best so far — avoids flicker if a retry briefly returns fewer bars.
-      if (candles.length && candles.length >= bestCount) {
-        bestCount = candles.length;
-        render(candles);
-        setLoading(false);
-      } else if (!candles.length && attempt === 1) {
-        setLoading(false); // nothing yet, but stop blocking the view
-      }
-      // Keep polling until we have a substantial backfill (or give up after ~40s).
-      if (bestCount < 60 && attempt < 9) {
-        timer = setTimeout(poll, attempt < 3 ? 2500 : 5000);
-      }
-    };
-
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [symbol, resolution]);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadHistory]);
 
   // Update the forming candle from the live quote.
   const quote = useMarketStore((s) => s.quotes[symbol]);
@@ -276,6 +320,112 @@ export function CandleChart({ symbol }: { symbol: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket]);
 
+  // Draw SL (red) / TP (green) preview lines from the tick inputs, anchored to the
+  // clicked entry. Shown in the long orientation (SL below / TP above) so the
+  // trader sees both levels live as they type; they flip naturally on a sell.
+  useEffect(() => {
+    const series = candleRef.current;
+    if (!series) return;
+    if (slLineRef.current) {
+      series.removePriceLine(slLineRef.current);
+      slLineRef.current = null;
+    }
+    if (tpLineRef.current) {
+      series.removePriceLine(tpLineRef.current);
+      tpLineRef.current = null;
+    }
+    if (!ticket) return;
+    const slT = parseFloat(slInput) || 0;
+    const tpT = parseFloat(tpInput) || 0;
+    if (slT > 0) {
+      slLineRef.current = series.createPriceLine({
+        price: round(ticket.price - slT * tickSize),
+        color: "#ea3943",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `SL ${slT}t`,
+      });
+    }
+    if (tpT > 0) {
+      tpLineRef.current = series.createPriceLine({
+        price: round(ticket.price + tpT * tickSize),
+        color: "#16c784",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: `TP ${tpT}t`,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket, slInput, tpInput, tickSize]);
+
+  // Draw a dashed price line per working order (green buy / red sell), with the
+  // price on the axis. Re-created when the order set or any price changes.
+  useEffect(() => {
+    const series = candleRef.current;
+    if (!series) return;
+    const lines = orderLinesRef.current;
+    const seen = new Set<string>();
+    for (const o of visibleOrders) {
+      seen.add(o.id);
+      const prev = lines.get(o.id);
+      if (prev) series.removePriceLine(prev);
+      lines.set(
+        o.id,
+        series.createPriceLine({
+          price: o.price as number,
+          color: o.side === "buy" ? "#16c784" : "#ea3943",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: "",
+        }),
+      );
+    }
+    // Remove lines for orders that closed OR were hidden (no line / no axis label).
+    for (const [id, line] of lines) {
+      if (!seen.has(id)) {
+        series.removePriceLine(line);
+        lines.delete(id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleKey]);
+
+  // Position the HTML cancel tags at each order's price. A rAF loop keeps them
+  // aligned as the chart scrolls / auto-scales (lightweight-charts has no
+  // price-scale event); setState only fires when a rounded Y actually changes.
+  useEffect(() => {
+    let raf = 0;
+    const update = () => {
+      const series = candleRef.current;
+      if (series) {
+        // Sit the tag just left of the price axis (whose width varies by price).
+        const right = Math.round(chartRef.current?.priceScale("right").width() ?? 56) + 4;
+        const tags = visibleOrders
+          .map((o) => {
+            const coord = series.priceToCoordinate(o.price as number);
+            if (coord == null) return null;
+            const abbr = o.type === "limit" ? "LMT" : o.type === "stop" ? "STP" : "MKT";
+            const role = o.bracketRole ? ` ${o.bracketRole}` : "";
+            const label = `${o.quantity} ${o.side === "buy" ? "BUY" : "SELL"} ${abbr}${role}`;
+            return { id: o.id, y: coord as number, side: o.side, label, right };
+          })
+          .filter((t): t is { id: string; y: number; side: Side; label: string; right: number } => t !== null);
+        const key = tags.map((t) => `${t.id}:${Math.round(t.y)}:${t.right}`).join("|");
+        if (key !== lastTagsRef.current) {
+          lastTagsRef.current = key;
+          setOrderTags(tags);
+        }
+      }
+      raf = requestAnimationFrame(update);
+    };
+    raf = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleKey]);
+
   // Close the ticket on Escape.
   useEffect(() => {
     if (!ticket) return;
@@ -297,8 +447,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const price = asMarket ? null : ticketPrice;
     const at = asMarket ? "MKT" : `${type.toUpperCase()} @ ${formatPrice(ticketPrice, precision)}`;
     const label = `${side === "buy" ? "Buy" : "Sell"} ${qty} ${symbol} ${at}`;
-    const stopLoss = slInput ? parseFloat(slInput) : null;
-    const takeProfit = tpInput ? parseFloat(tpInput) : null;
+    // SL/TP entered as a tick distance from the entry, oriented to the side
+    // (stop adverse, target favourable) — consistent with the order panel.
+    const entry = asMarket ? market : ticketPrice;
+    const slTicksN = parseFloat(slInput) || 0;
+    const tpTicksN = parseFloat(tpInput) || 0;
+    const stopDir = side === "buy" ? -1 : 1; // a long's stop sits below the entry
+    const stopLoss = slTicksN > 0 ? round(entry + stopDir * slTicksN * tickSize) : null;
+    const takeProfit = tpTicksN > 0 ? round(entry - stopDir * tpTicksN * tickSize) : null;
     setTicket(null);
     const res = await placeOrder({ symbol, side, type, quantity: qty, price, stopLoss, takeProfit });
     setPlaced(res.ok ? `✓ ${label}` : `✗ ${res.error ?? "Order rejected"}`);
@@ -365,6 +521,31 @@ export function CandleChart({ symbol }: { symbol: string }) {
 
         <div ref={containerRef} className="h-full w-full" />
 
+        {/* Working-order tags at each order's price line (right side, near the axis).
+            The ✕ HIDES the label only — it does NOT cancel the order. */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          {orderTags.map((t) => (
+              <div
+                key={t.id}
+                style={{ top: t.y, right: t.right }}
+                className={cn(
+                  "pointer-events-auto absolute z-20 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                  t.side === "buy" ? "bg-long/90 text-black" : "bg-short/90 text-white",
+                )}
+              >
+                <button
+                  type="button"
+                  title="Hide this label"
+                  onClick={() => setHiddenTagIds((prev) => new Set(prev).add(t.id))}
+                  className="text-[11px] leading-none opacity-80 hover:opacity-100"
+                >
+                  ✕
+                </button>
+                {t.label}
+              </div>
+            ))}
+        </div>
+
         {ticket && (
           <div
             className="absolute z-20"
@@ -398,16 +579,18 @@ export function CandleChart({ symbol }: { symbol: string }) {
                   value={slInput}
                   onChange={(e) => setSlInput(e.target.value)}
                   type="number"
-                  inputMode="decimal"
-                  placeholder="SL"
+                  inputMode="numeric"
+                  step="1"
+                  placeholder="SL ticks"
                   className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-foreground placeholder:text-muted-2 focus:border-primary/60 focus:outline-none"
                 />
                 <input
                   value={tpInput}
                   onChange={(e) => setTpInput(e.target.value)}
                   type="number"
-                  inputMode="decimal"
-                  placeholder="TP"
+                  inputMode="numeric"
+                  step="1"
+                  placeholder="TP ticks"
                   className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-foreground placeholder:text-muted-2 focus:border-primary/60 focus:outline-none"
                 />
               </div>

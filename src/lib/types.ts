@@ -91,6 +91,7 @@ export interface Order {
   createdAt: number;
   updatedAt: number;
   reason?: string; // populated on reject/cancel
+  bracketRole?: "SL" | "TP"; // set when this order is a bracket exit leg (stop-loss / take-profit)
 }
 
 export interface Position {
@@ -117,6 +118,7 @@ export interface AccountSummary {
   accountId: string;
   currency: string;
   status: "ACTIVE" | "PASSED" | "FAILED" | "SUSPENDED";
+  statusReason?: string | null; // why a non-ACTIVE account is in that state (the breach detail)
   startingBalance: number;
   balance: number; // cash
   equity: number; // balance + unrealized pnl

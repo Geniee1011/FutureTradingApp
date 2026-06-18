@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/Badge";
 import { OrderTicket } from "@/components/trade/OrderTicket";
 import { PositionsTable } from "@/components/trade/PositionsTable";
 import { OrdersTable } from "@/components/trade/OrdersTable";
+import { AccountStatusBanner } from "@/components/trade/AccountStatusBanner";
 import { AdvancedChart } from "@/components/chart/tradingview/AdvancedChart";
 import { LivePrice } from "@/components/market/LivePrice";
 import { SymbolPicker } from "@/components/market/SymbolPicker";
@@ -26,7 +27,9 @@ export default function TradePage() {
   const openOrders = orders.filter((o) => o.status === "open" || o.status === "partial");
 
   return (
-    <div className="grid gap-3 lg:grid-cols-[1fr_300px] lg:items-start">
+    <div className="flex flex-col gap-3">
+      <AccountStatusBanner />
+      <div className="grid gap-3 lg:grid-cols-[1fr_300px] lg:items-start">
       {/* Center: instrument header + chart + bottom tabs */}
       <div className="flex flex-col gap-3">
         <Card>
@@ -61,7 +64,9 @@ export default function TradePage() {
         </Card>
       </div>
 
-      {/* Right: order ticket + positions / open orders */}
+      {/* Right: order ticket (full height) + positions / open orders. Only the
+          list inside this panel scrolls — sized to show ~5 rows before scrolling,
+          so a long orders list neither grows the page nor hides the chart. */}
       <div className="flex flex-col gap-3">
         <Card className="overflow-hidden">
           <OrderTicket symbol={symbol} />
@@ -75,8 +80,15 @@ export default function TradePage() {
               Open orders ({openOrders.length})
             </TabButton>
           </div>
-          {bottomTab === "positions" ? <PositionsTable /> : <OrdersTable orders={openOrders} />}
+          <div className="max-h-80 overflow-y-auto">
+            {bottomTab === "positions" ? (
+              <PositionsTable variant="compact" />
+            ) : (
+              <OrdersTable orders={openOrders} variant="compact" />
+            )}
+          </div>
         </Card>
+      </div>
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ const API_BASE = WS_URL ? WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "") :
 
 interface AccountUpdate {
   status: AccountSummary["status"];
+  statusReason?: string | null;
   balance: number;
   equity: number;
   unrealizedPnl: number;
@@ -83,6 +84,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             summary: {
               ...s.summary,
               status: u.status,
+              statusReason: u.statusReason ?? null,
               balance: u.balance,
               equity: u.equity,
               unrealizedPnl: u.unrealizedPnl,

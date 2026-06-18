@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useOrdersStore } from "@/store/orders-store";
 import { useMarketStore } from "@/store/market-store";
 import { getInstrument } from "@/lib/constants";
@@ -15,12 +15,11 @@ export function OrderTicket({ symbol }: { symbol: string }) {
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
 
-  const [side, setSide] = useState<Side>("buy");
   const [type, setType] = useState<OrderType>("market");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
-  const [stopLoss, setStopLoss] = useState("");
-  const [takeProfit, setTakeProfit] = useState("");
+  const [slTicks, setSlTicks] = useState("");
+  const [tpTicks, setTpTicks] = useState("");
   const [bracketOn, setBracketOn] = useState(false);
   const [tif, setTif] = useState<TimeInForce>("GTC");
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -33,50 +32,63 @@ export function OrderTicket({ symbol }: { symbol: string }) {
 
   const qtyNum = parseFloat(quantity) || 0;
   const refPrice = type === "market" ? quote?.price ?? 0 : parseFloat(price) || 0;
-  // Contract notional in USD = price × point value × qty (ES @ 7574 = $378,700/contract).
   const multiplier = inst?.multiplier ?? 1;
-  const notional = qtyNum * refPrice * multiplier;
+  const tickSize = inst?.tickSize ?? 0.01;
 
-  // When the bracket is enabled (or the side flips while it's on), seed sensible
-  // SL/TP levels around the entry — SL ~0.25% adverse, TP ~0.5% favourable (1:2),
-  // oriented to the side. The trader can then fine-tune either field.
+  // Convert a tick distance to an SL/TP price, oriented to the side: a stop sits
+  // adverse to the trade (below a long / above a short), a target favourable.
+  // Ticks are the native futures unit (e.g. 1 ES tick = 0.25 pt = $12.50).
+  const ticksToPrice = (ticksStr: string, isStop: boolean, ts: Side) => {
+    const t = parseFloat(ticksStr) || 0;
+    if (t <= 0 || refPrice <= 0) return 0;
+    const stopDir = ts === "buy" ? -1 : 1; // a long's stop is below the entry
+    const dir = isStop ? stopDir : -stopDir;
+    return refPrice + dir * t * tickSize;
+  };
+
+  // Preview SL/TP (shown under the inputs + used for the risk/reward readout). With
+  // no side toggle, preview uses the BUY orientation; the actual order re-orients to
+  // whichever button is pressed. Risk magnitude is the same either way.
+  const slPriceEff = bracketOn ? ticksToPrice(slTicks, true, "buy") : 0;
+  const tpPriceEff = bracketOn ? ticksToPrice(tpTicks, false, "buy") : 0;
+
+  // When the bracket is enabled (or the side flips while it's on), seed a sensible
+  // 1:2 default (10-tick stop, 20-tick target). The trader fine-tunes from there.
   useEffect(() => {
     if (!bracketOn || refPrice <= 0) return;
-    const sl = side === "buy" ? refPrice * (1 - 0.0025) : refPrice * (1 + 0.0025);
-    const tp = side === "buy" ? refPrice * (1 + 0.005) : refPrice * (1 - 0.005);
-    setStopLoss(sl.toFixed(precision));
-    setTakeProfit(tp.toFixed(precision));
-    // Intentionally re-seed only on enable / side change, not on every price tick.
+    setSlTicks("10");
+    setTpTicks("20");
+    // Intentionally re-seed only on enable, not on every price tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bracketOn, side]);
+  }, [bracketOn]);
 
   // Live risk / reward for the active bracket (in account currency).
-  const slNum = parseFloat(stopLoss) || 0;
-  const tpNum = parseFloat(takeProfit) || 0;
-  const riskUsd = bracketOn && slNum > 0 && refPrice > 0 ? Math.abs(refPrice - slNum) * qtyNum * multiplier : 0;
-  const rewardUsd = bracketOn && tpNum > 0 && refPrice > 0 ? Math.abs(tpNum - refPrice) * qtyNum * multiplier : 0;
+  const riskUsd = slPriceEff > 0 && refPrice > 0 ? Math.abs(refPrice - slPriceEff) * qtyNum * multiplier : 0;
+  const rewardUsd = tpPriceEff > 0 && refPrice > 0 ? Math.abs(tpPriceEff - refPrice) * qtyNum * multiplier : 0;
   const rr = riskUsd > 0 ? rewardUsd / riskUsd : 0;
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submitOrder(orderSide: Side) {
     if (submitting) return;
     setSubmitting(true);
+    // Orient the bracket to the side actually submitted (SL adverse, TP favourable).
+    const sl = bracketOn && slTicks ? Number(ticksToPrice(slTicks, true, orderSide).toFixed(precision)) || null : null;
+    const tp = bracketOn && tpTicks ? Number(ticksToPrice(tpTicks, false, orderSide).toFixed(precision)) || null : null;
     const res = await placeOrder({
       symbol,
-      side,
+      side: orderSide,
       type,
       quantity: qtyNum,
       price: type === "market" ? null : parseFloat(price),
       timeInForce: tif,
-      stopLoss: bracketOn && stopLoss ? parseFloat(stopLoss) : null,
-      takeProfit: bracketOn && takeProfit ? parseFloat(takeProfit) : null,
+      stopLoss: sl,
+      takeProfit: tp,
     });
     setSubmitting(false);
     if (res.ok) {
-      setFeedback({ ok: true, msg: `${side === "buy" ? "Bought" : "Sold"} ${qtyNum} ${symbol}` });
+      setFeedback({ ok: true, msg: `${orderSide === "buy" ? "Bought" : "Sold"} ${qtyNum} ${symbol}` });
       setQuantity("");
-      setStopLoss("");
-      setTakeProfit("");
+      setSlTicks("");
+      setTpTicks("");
       setBracketOn(false);
     } else {
       setFeedback({ ok: false, msg: res.error ?? "Order rejected" });
@@ -84,32 +96,42 @@ export function OrderTicket({ symbol }: { symbol: string }) {
     setTimeout(() => setFeedback(null), 4000);
   }
 
-  return (
-    <form onSubmit={submit} className="flex flex-col gap-3 p-3">
-      {/* Buy / Sell toggle */}
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-surface-2 p-1">
-        <button
-          type="button"
-          onClick={() => setSide("buy")}
-          className={cn(
-            "rounded-md py-2 text-sm font-semibold transition-colors",
-            side === "buy" ? "bg-long text-black" : "text-muted hover:text-foreground",
-          )}
-        >
-          Buy / Long
-        </button>
-        <button
-          type="button"
-          onClick={() => setSide("sell")}
-          className={cn(
-            "rounded-md py-2 text-sm font-semibold transition-colors",
-            side === "sell" ? "bg-short text-white" : "text-muted hover:text-foreground",
-          )}
-        >
-          Sell / Short
-        </button>
-      </div>
+  // One-click quick trade: MKT (market), Ask / Bid (limit at the live quote).
+  // Buy-at-ask / sell-at-bid cross the spread (fill now); buy-at-bid / sell-at-ask
+  // rest passively. Uses the entered quantity; no bracket (use the form for that).
+  async function quickOrder(orderSide: Side, mode: "mkt" | "ask" | "bid") {
+    if (submitting) return;
+    if (qtyNum <= 0) {
+      setFeedback({ ok: false, msg: "Enter a quantity first." });
+      setTimeout(() => setFeedback(null), 4000);
+      return;
+    }
+    const orderType: OrderType = mode === "mkt" ? "market" : "limit";
+    const limitPrice = mode === "ask" ? quote?.ask : mode === "bid" ? quote?.bid : null;
+    if (orderType === "limit" && !(typeof limitPrice === "number" && limitPrice > 0)) {
+      setFeedback({ ok: false, msg: "No live bid/ask available yet." });
+      setTimeout(() => setFeedback(null), 4000);
+      return;
+    }
+    setSubmitting(true);
+    const res = await placeOrder({
+      symbol,
+      side: orderSide,
+      type: orderType,
+      quantity: qtyNum,
+      price: orderType === "market" ? null : (limitPrice as number),
+      timeInForce: tif,
+      stopLoss: null,
+      takeProfit: null,
+    });
+    setSubmitting(false);
+    const label = `${orderSide === "buy" ? "Buy" : "Sell"} ${qtyNum} ${symbol} ${mode.toUpperCase()}`;
+    setFeedback(res.ok ? { ok: true, msg: label } : { ok: false, msg: res.error ?? "Order rejected" });
+    setTimeout(() => setFeedback(null), 4000);
+  }
 
+  return (
+    <form onSubmit={(e) => e.preventDefault()} className="flex flex-col gap-3 p-3">
       <div>
         <Label>Order type</Label>
         <Select value={type} onChange={(e) => setType(e.target.value as OrderType)}>
@@ -163,32 +185,18 @@ export function OrderTicket({ symbol }: { symbol: string }) {
 
         {bracketOn && (
           <div className="space-y-3 border-t border-border px-3 py-3">
+            {/* SL/TP entered as a tick distance from the entry (futures-native).
+                The resolved price shows under each field for reference. */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label className="text-short">Stop loss</Label>
-                <Input
-                  type="number"
-                  step="any"
-                  min="0"
-                  inputMode="decimal"
-                  placeholder="price"
-                  value={stopLoss}
-                  onChange={(e) => setStopLoss(e.target.value)}
-                  className="nums border-short/40 focus:border-short/70 focus:ring-short/30"
-                />
+                <TickInput value={slTicks} onChange={setSlTicks} tone="short" />
+                <Hint>{slPriceEff > 0 ? `= ${formatPrice(slPriceEff, precision)}` : "ticks from entry"}</Hint>
               </div>
               <div>
                 <Label className="text-long">Take profit</Label>
-                <Input
-                  type="number"
-                  step="any"
-                  min="0"
-                  inputMode="decimal"
-                  placeholder="price"
-                  value={takeProfit}
-                  onChange={(e) => setTakeProfit(e.target.value)}
-                  className="nums border-long/40 focus:border-long/70 focus:ring-long/30"
-                />
+                <TickInput value={tpTicks} onChange={setTpTicks} tone="long" />
+                <Hint>{tpPriceEff > 0 ? `= ${formatPrice(tpPriceEff, precision)}` : "ticks from entry"}</Hint>
               </div>
             </div>
 
@@ -211,10 +219,48 @@ export function OrderTicket({ symbol }: { symbol: string }) {
         </Select>
       </div>
 
-      <div className="space-y-1 rounded-lg bg-surface-2 px-3 py-2 text-xs">
+      <div className="space-y-2 rounded-lg bg-surface-2 px-3 py-2 text-xs">
+        {/* Bid / Ask — the live two-sided market (you buy at the ask, sell at the bid). */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="rounded-md bg-long/10 px-2 py-1.5">
+            <div className="text-[10px] uppercase tracking-wide text-muted-2">Bid</div>
+            <div className="nums text-sm font-semibold text-long">
+              {quote ? formatPrice(quote.bid, precision) : "—"}
+            </div>
+          </div>
+          <div className="rounded-md bg-short/10 px-2 py-1.5 text-right">
+            <div className="text-[10px] uppercase tracking-wide text-muted-2">Ask</div>
+            <div className="nums text-sm font-semibold text-short">
+              {quote ? formatPrice(quote.ask, precision) : "—"}
+            </div>
+          </div>
+        </div>
         <Row label="Last price" value={quote ? formatPrice(quote.price, precision) : "—"} />
-        <Row label="Order value" value={formatCurrency(notional)} />
-        <Row label="Est. fee (0.05%)" value={formatCurrency(notional * 0.0005)} />
+      </div>
+
+      {/* Quick trade: one-click entry at market / ask / bid for the entered qty. */}
+      <div>
+        <Label>Quick trade</Label>
+        <div className="grid grid-cols-2 gap-1.5">
+          <QuickBtn tone="long" solid disabled={qtyNum <= 0 || submitting} onClick={() => quickOrder("buy", "mkt")}>
+            Buy MKT
+          </QuickBtn>
+          <QuickBtn tone="short" solid disabled={qtyNum <= 0 || submitting} onClick={() => quickOrder("sell", "mkt")}>
+            Sell MKT
+          </QuickBtn>
+          <QuickBtn tone="long" disabled={qtyNum <= 0 || submitting || !quote} onClick={() => quickOrder("buy", "ask")}>
+            Buy Ask
+          </QuickBtn>
+          <QuickBtn tone="short" disabled={qtyNum <= 0 || submitting || !quote} onClick={() => quickOrder("sell", "ask")}>
+            Sell Ask
+          </QuickBtn>
+          <QuickBtn tone="long" disabled={qtyNum <= 0 || submitting || !quote} onClick={() => quickOrder("buy", "bid")}>
+            Buy Bid
+          </QuickBtn>
+          <QuickBtn tone="short" disabled={qtyNum <= 0 || submitting || !quote} onClick={() => quickOrder("sell", "bid")}>
+            Sell Bid
+          </QuickBtn>
+        </div>
       </div>
 
       {feedback && (
@@ -228,17 +274,98 @@ export function OrderTicket({ symbol }: { symbol: string }) {
         </div>
       )}
 
-      <Button
-        type="submit"
-        variant={side === "buy" ? "long" : "short"}
-        size="lg"
-        loading={submitting}
-        disabled={qtyNum <= 0}
-      >
-        {side === "buy" ? "Buy" : "Sell"} {symbol}
-      </Button>
+      {/* Direction is chosen here (replaces the old Buy/Sell toggle). */}
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          type="button"
+          variant="long"
+          size="lg"
+          loading={submitting}
+          disabled={qtyNum <= 0}
+          onClick={() => submitOrder("buy")}
+        >
+          Buy {symbol}
+        </Button>
+        <Button
+          type="button"
+          variant="short"
+          size="lg"
+          loading={submitting}
+          disabled={qtyNum <= 0}
+          onClick={() => submitOrder("sell")}
+        >
+          Sell {symbol}
+        </Button>
+      </div>
     </form>
   );
+}
+
+/** One-click quick-trade button: bright `solid` for MKT, muted for Ask/Bid; green long / red short. */
+function QuickBtn({
+  tone,
+  solid = false,
+  disabled,
+  onClick,
+  children,
+}: {
+  tone: "long" | "short";
+  solid?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const styles = solid
+    ? tone === "long"
+      ? "bg-long text-black hover:brightness-110"
+      : "bg-short text-white hover:brightness-110"
+    : tone === "long"
+      ? "bg-long/15 text-long hover:bg-long/25"
+      : "bg-short/15 text-short hover:bg-short/25";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "rounded-md px-2 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40",
+        styles,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Numeric tick-count input with a trailing "ticks" unit label, tinted to side. */
+function TickInput({ value, onChange, tone }: { value: string; onChange: (v: string) => void; tone: "short" | "long" }) {
+  return (
+    <div className="relative">
+      <Input
+        type="number"
+        step="1"
+        min="0"
+        inputMode="numeric"
+        placeholder="ticks"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "nums pr-11",
+          tone === "short"
+            ? "border-short/40 focus:border-short/70 focus:ring-short/30"
+            : "border-long/40 focus:border-long/70 focus:ring-long/30",
+        )}
+      />
+      <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-muted-2">
+        ticks
+      </span>
+    </div>
+  );
+}
+
+/** Small muted helper line under a bracket input (shows the value in the other unit). */
+function Hint({ children }: { children: ReactNode }) {
+  return <div className="nums mt-1 text-[10px] text-muted-2">{children}</div>;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

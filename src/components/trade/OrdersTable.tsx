@@ -17,7 +17,15 @@ const STATUS_TONE: Record<OrderStatus, "long" | "short" | "warning" | "info" | "
   rejected: "short",
 };
 
-export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number }) {
+export function OrdersTable({
+  orders,
+  limit,
+  variant = "table",
+}: {
+  orders: Order[];
+  limit?: number;
+  variant?: "table" | "compact";
+}) {
   const cancelOrder = useOrdersStore((s) => s.cancelOrder);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +41,72 @@ export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number
 
   if (rows.length === 0) {
     return <div className="px-4 py-10 text-center text-sm text-muted">No orders to show.</div>;
+  }
+
+  // Compact card list for narrow panels (e.g. the trade page side column). The
+  // full table forces a horizontal scroll AND wraps the order-ID UUID across
+  // several lines, so only ~2 orders fit. Here each order is two tight lines with
+  // no UUID (useless at a glance) — many fit at once.
+  if (variant === "compact") {
+    return (
+      <div>
+        {error && (
+          <div className="border-b border-short/40 bg-short/10 px-4 py-2 text-xs text-short">{error}</div>
+        )}
+        <div className="divide-y divide-border/60">
+          {rows.map((o) => {
+            const precision = getInstrument(o.symbol)?.pricePrecision ?? 2;
+            const cancellable = o.status === "open" || o.status === "partial";
+            const priceLabel =
+              o.price != null
+                ? formatPrice(o.price, precision)
+                : o.avgFillPrice != null
+                  ? formatPrice(o.avgFillPrice, precision)
+                  : "MKT";
+            const qtyLabel =
+              o.filledQuantity > 0 && o.filledQuantity < o.quantity
+                ? `${o.filledQuantity}/${o.quantity}`
+                : `${o.quantity}`;
+            return (
+              <div key={o.id} className="px-4 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5 text-sm">
+                    <span className="font-medium">{o.symbol}</span>
+                    <span className={cn("font-medium", o.side === "buy" ? "text-long" : "text-short")}>
+                      {o.side === "buy" ? "Buy" : "Sell"}
+                    </span>
+                    <span className="capitalize text-muted">{o.type}</span>
+                    {o.bracketRole && <BracketTag role={o.bracketRole} />}
+                  </div>
+                  {cancellable ? (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      loading={pendingId === o.id}
+                      disabled={pendingId === o.id}
+                      onClick={() => onCancel(o.id)}
+                    >
+                      Cancel
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted-2">—</span>
+                  )}
+                </div>
+                <div className="mt-1 flex items-center justify-between gap-2 text-xs">
+                  <span className="nums text-muted">
+                    {qtyLabel} @ {priceLabel}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={STATUS_TONE[o.status]}>{o.status}</Badge>
+                    <span className="nums text-muted-2">{formatTime(o.createdAt)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -51,7 +125,8 @@ export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number
             <th className="px-4 py-2.5 text-right font-medium">Qty</th>
             <th className="px-4 py-2.5 text-right font-medium">Price</th>
             <th className="px-4 py-2.5 font-medium">Status</th>
-            <th className="px-4 py-2.5 text-right font-medium">Action</th>
+            {/* Pinned right so the action stays visible in narrow cards. */}
+            <th className="sticky right-0 z-10 bg-surface px-4 py-2.5 text-right font-medium shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.18)]">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -59,7 +134,7 @@ export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number
             const precision = getInstrument(o.symbol)?.pricePrecision ?? 2;
             const cancellable = o.status === "open" || o.status === "partial";
             return (
-              <tr key={o.id} className="border-b border-border/60 hover:bg-surface-2">
+              <tr key={o.id} className="group border-b border-border/60 hover:bg-surface-2">
                 <td className="nums px-4 py-2.5 text-muted">{formatTime(o.createdAt)}</td>
                 <td className="nums px-4 py-2.5 text-xs text-muted-2">{o.id}</td>
                 <td className="px-4 py-2.5 font-medium">{o.symbol}</td>
@@ -68,7 +143,10 @@ export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number
                     {o.side === "buy" ? "Buy" : "Sell"}
                   </span>
                 </td>
-                <td className="px-4 py-2.5 capitalize text-muted">{o.type}</td>
+                <td className="px-4 py-2.5 capitalize text-muted">
+                  {o.type}
+                  {o.bracketRole && <BracketTag role={o.bracketRole} />}
+                </td>
                 <td className="nums px-4 py-2.5 text-right">
                   {o.filledQuantity > 0 && o.filledQuantity < o.quantity ? (
                     <span>
@@ -86,7 +164,7 @@ export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number
                   <Badge tone={STATUS_TONE[o.status]}>{o.status}</Badge>
                   {o.reason && <div className="mt-0.5 text-[10px] text-muted-2">{o.reason}</div>}
                 </td>
-                <td className="px-4 py-2.5 text-right">
+                <td className="sticky right-0 z-10 bg-surface px-4 py-2.5 text-right shadow-[-6px_0_6px_-6px_rgba(0,0,0,0.18)] group-hover:bg-surface-2">
                   {cancellable ? (
                     <Button
                       variant="danger"
@@ -107,5 +185,19 @@ export function OrdersTable({ orders, limit }: { orders: Order[]; limit?: number
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** Small tag marking a bracket exit leg as the stop-loss (red) or take-profit (green). */
+function BracketTag({ role }: { role: "SL" | "TP" }) {
+  return (
+    <span
+      className={cn(
+        "ml-1.5 rounded px-1 py-0.5 align-middle text-[10px] font-semibold not-italic",
+        role === "SL" ? "bg-short/15 text-short" : "bg-long/15 text-long",
+      )}
+    >
+      {role}
+    </span>
   );
 }
