@@ -32,6 +32,27 @@ const RESOLUTIONS = [
   { label: "1D", seconds: 86400 },
 ];
 
+// Order labels the trader dismissed from the chart, persisted so they stay hidden
+// across reloads (component state alone resets on refresh). Keyed by order id.
+const HIDDEN_LABELS_KEY = "tp.hiddenOrderLabels";
+function loadHiddenLabels(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_LABELS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveHiddenLabels(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HIDDEN_LABELS_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* storage disabled / over quota — non-fatal */
+  }
+}
+
 /** Pending click-to-trade ticket: chart pixel position + the price clicked. */
 interface ChartTicket {
   x: number;
@@ -61,13 +82,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [resolution, setResolution] = useState(60);
   const [loading, setLoading] = useState(true);
   const [ticket, setTicket] = useState<ChartTicket | null>(null);
+  const [dragDelta, setDragDelta] = useState({ x: 0, y: 0 }); // ticket drag offset from its anchor
   const [qty, setQty] = useState(1);
   const [slInput, setSlInput] = useState("");
   const [tpInput, setTpInput] = useState("");
   const [placed, setPlaced] = useState<string | null>(null);
   const [orderTags, setOrderTags] = useState<{ id: string; y: number; side: Side; label: string; right: number }[]>([]);
   // Order labels dismissed from the chart (hidden ONLY — the orders stay active).
-  const [hiddenTagIds, setHiddenTagIds] = useState<Set<string>>(new Set());
+  // Seeded from localStorage so dismissals survive a page refresh.
+  const [hiddenTagIds, setHiddenTagIds] = useState<Set<string>>(loadHiddenLabels);
 
   // Clear the bracket inputs whenever the ticket closes.
   useEffect(() => {
@@ -140,6 +163,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
       if (!param.point || !candleRef.current) return;
       const price = candleRef.current.coordinateToPrice(param.point.y);
       if (price == null) return;
+      setDragDelta({ x: 0, y: 0 }); // re-anchor each new ticket at the click point
       setTicket({ x: param.point.x, y: param.point.y, price: price as number });
     });
 
@@ -476,6 +500,22 @@ export function CandleChart({ symbol }: { symbol: string }) {
   // Flip the popup to the left when clicking near the right edge.
   const flip = ticket && containerRef.current ? ticket.x > containerRef.current.clientWidth * 0.62 : false;
 
+  // Drag the ticket by its header so it can be moved off the price action.
+  function startTicketDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const base = dragDelta;
+    const onMove = (ev: MouseEvent) => setDragDelta({ x: base.x + (ev.clientX - startX), y: base.y + (ev.clientY - startY) });
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
@@ -536,7 +576,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
                 <button
                   type="button"
                   title="Hide this label"
-                  onClick={() => setHiddenTagIds((prev) => new Set(prev).add(t.id))}
+                  onClick={() =>
+                    setHiddenTagIds((prev) => {
+                      const next = new Set(prev).add(t.id);
+                      saveHiddenLabels(next);
+                      return next;
+                    })
+                  }
                   className="text-[11px] leading-none opacity-80 hover:opacity-100"
                 >
                   ✕
@@ -552,13 +598,20 @@ export function CandleChart({ symbol }: { symbol: string }) {
             style={{
               left: ticket.x,
               top: ticket.y,
-              transform: `translate(${flip ? "calc(-100% - 14px)" : "14px"}, -50%)`,
+              transform: `translate(calc(${flip ? "-100% - 14px" : "14px"} + ${dragDelta.x}px), calc(-50% + ${dragDelta.y}px))`,
             }}
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="flex w-44 flex-col gap-1 rounded-lg border border-border-strong bg-surface-2/95 p-1.5 shadow-2xl backdrop-blur">
               <div className="flex items-center justify-between px-0.5">
-                <span className="nums text-[11px] text-muted">@ {formatPrice(ticketPrice, precision)}</span>
+                <div
+                  className="flex flex-1 cursor-move select-none items-center gap-1"
+                  onMouseDown={startTicketDrag}
+                  title="Drag to move"
+                >
+                  <span className="text-[11px] leading-none text-muted-2">⠿</span>
+                  <span className="nums text-[11px] text-muted">@ {formatPrice(ticketPrice, precision)}</span>
+                </div>
                 <div className="flex items-center gap-1">
                   <QtyBtn onClick={() => setQty((q) => Math.max(1, q - 1))}>−</QtyBtn>
                   <span className="nums w-5 text-center text-xs font-medium">{qty}</span>
