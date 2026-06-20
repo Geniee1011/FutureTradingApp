@@ -155,6 +155,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
       priceFormat: { type: "volume" },
       priceScaleId: "",
       color: c.volume,
+      lastValueVisible: false, // hide the floating volume value on the price axis
+      priceLineVisible: false,
     });
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
@@ -234,7 +236,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
         lastCandleRef.current = candleData[candleData.length - 1] ?? null;
         lastVolumeRef.current = volData[volData.length - 1] ?? null;
         if (!fitted) {
-          chartRef.current?.timeScale().fitContent();
+          // Fit this load's data, then RELEASE the price scale's auto-fit so traders
+          // can pan up/down immediately (auto-scale otherwise snaps the view back and
+          // blocks vertical drag until you manually rescale the axis).
+          const chart = chartRef.current;
+          chart?.timeScale().fitContent();
+          chart?.priceScale("right").applyOptions({ autoScale: true }); // fit price to this data
+          window.setTimeout(() => chartRef.current?.priceScale("right").applyOptions({ autoScale: false }), 60);
           fitted = true;
         }
       };
@@ -495,7 +503,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const half = ((range.to - range.from) / 2) * factor;
     ts.setVisibleLogicalRange({ from: center - half, to: center + half });
   };
-  const resetZoom = () => chartRef.current?.timeScale().fitContent();
+  const resetZoom = () => {
+    // Re-fit both axes, then release the price auto-fit again so vertical pan stays available.
+    const chart = chartRef.current;
+    chart?.timeScale().fitContent();
+    chart?.priceScale("right").applyOptions({ autoScale: true });
+    window.setTimeout(() => chartRef.current?.priceScale("right").applyOptions({ autoScale: false }), 60);
+  };
 
   // Flip the popup to the left when clicking near the right edge.
   const flip = ticket && containerRef.current ? ticket.x > containerRef.current.clientWidth * 0.62 : false;
@@ -602,7 +616,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
             }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <div className="flex w-44 flex-col gap-1 rounded-lg border border-border-strong bg-surface-2/95 p-1.5 shadow-2xl backdrop-blur">
+            <div className="flex w-52 flex-col gap-1 rounded-lg border border-border-strong bg-surface-2/95 p-1.5 shadow-2xl backdrop-blur">
               <div className="flex items-center justify-between px-0.5">
                 <div
                   className="flex flex-1 cursor-move select-none items-center gap-1"
@@ -650,13 +664,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
 
               <button
                 onClick={() => submit("sell")}
-                className="rounded-md bg-short px-2 py-1.5 text-left text-xs font-semibold text-white hover:brightness-110"
+                className="rounded-md bg-short px-2 py-1.5 text-center text-xs font-semibold text-white hover:brightness-110"
               >
                 Sell {qty} {sellType.toUpperCase()} @ {formatPrice(ticketPrice, precision)}
               </button>
               <button
                 onClick={() => submit("buy")}
-                className="rounded-md bg-long px-2 py-1.5 text-left text-xs font-semibold text-black hover:brightness-110"
+                className="rounded-md bg-long px-2 py-1.5 text-center text-xs font-semibold text-black hover:brightness-110"
               >
                 Buy {qty} {buyType.toUpperCase()} @ {formatPrice(ticketPrice, precision)}
               </button>

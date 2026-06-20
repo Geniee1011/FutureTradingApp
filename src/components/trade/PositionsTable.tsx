@@ -58,8 +58,8 @@ export function PositionsTable({ variant = "table" }: { variant?: "table" | "com
                 </Button>
               </div>
               <div className="mt-1.5 flex items-end justify-between gap-2">
-                <div className="nums text-xs text-muted">
-                  {p.quantity} @ {formatPrice(p.avgPrice, precision)}
+                <div className="nums text-xs text-muted" title="Size @ average entry → current mark">
+                  {p.quantity} @ <span className="text-muted-2">avg</span> {formatPrice(p.avgPrice, precision)}
                   <span className="text-muted-2"> → </span>
                   {formatPrice(mark, precision)}
                 </div>
