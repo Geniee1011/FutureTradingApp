@@ -38,13 +38,21 @@ export function OrderTicket({ symbol }: { symbol: string }) {
   // Convert a tick distance to an SL/TP price, oriented to the side: a stop sits
   // adverse to the trade (below a long / above a short), a target favourable.
   // Ticks are the native futures unit (e.g. 1 ES tick = 0.25 pt = $12.50).
-  const ticksToPrice = (ticksStr: string, isStop: boolean, ts: Side) => {
+  const ticksToPrice = (ticksStr: string, isStop: boolean, ts: Side, ref: number = refPrice) => {
     const t = parseFloat(ticksStr) || 0;
-    if (t <= 0 || refPrice <= 0) return 0;
+    if (t <= 0 || ref <= 0) return 0;
     const stopDir = ts === "buy" ? -1 : 1; // a long's stop is below the entry
     const dir = isStop ? stopDir : -stopDir;
-    return refPrice + dir * t * tickSize;
+    return ref + dir * t * tickSize;
   };
+
+  // Resolve the active bracket to SL/TP prices for an order at `entry`, oriented to the
+  // side. Returns nulls when the bracket toggle is off. Shared by the main Buy/Sell
+  // buttons and the quick-trade buttons so both honour the bracket.
+  const bracketFor = (orderSide: Side, entry: number) => ({
+    sl: bracketOn && slTicks ? Number(ticksToPrice(slTicks, true, orderSide, entry).toFixed(precision)) || null : null,
+    tp: bracketOn && tpTicks ? Number(ticksToPrice(tpTicks, false, orderSide, entry).toFixed(precision)) || null : null,
+  });
 
   // Preview SL/TP (shown under the inputs + used for the risk/reward readout). With
   // no side toggle, preview uses the BUY orientation; the actual order re-orients to
@@ -71,8 +79,7 @@ export function OrderTicket({ symbol }: { symbol: string }) {
     if (submitting) return;
     setSubmitting(true);
     // Orient the bracket to the side actually submitted (SL adverse, TP favourable).
-    const sl = bracketOn && slTicks ? Number(ticksToPrice(slTicks, true, orderSide).toFixed(precision)) || null : null;
-    const tp = bracketOn && tpTicks ? Number(ticksToPrice(tpTicks, false, orderSide).toFixed(precision)) || null : null;
+    const { sl, tp } = bracketFor(orderSide, refPrice);
     const res = await placeOrder({
       symbol,
       side: orderSide,
@@ -98,7 +105,8 @@ export function OrderTicket({ symbol }: { symbol: string }) {
 
   // One-click quick trade: MKT (market), Ask / Bid (limit at the live quote).
   // Buy-at-ask / sell-at-bid cross the spread (fill now); buy-at-bid / sell-at-ask
-  // rest passively. Uses the entered quantity; no bracket (use the form for that).
+  // rest passively. Honours the bracket toggle (SL/TP attached relative to the
+  // quick-trade entry: the live mark for MKT, the ask/bid for limit).
   async function quickOrder(orderSide: Side, mode: "mkt" | "ask" | "bid") {
     if (submitting) return;
     if (qtyNum <= 0) {
@@ -113,6 +121,8 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       setTimeout(() => setFeedback(null), 4000);
       return;
     }
+    const entry = mode === "mkt" ? quote?.price ?? 0 : (limitPrice as number);
+    const { sl, tp } = bracketFor(orderSide, entry);
     setSubmitting(true);
     const res = await placeOrder({
       symbol,
@@ -121,8 +131,8 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       quantity: qtyNum,
       price: orderType === "market" ? null : (limitPrice as number),
       timeInForce: tif,
-      stopLoss: null,
-      takeProfit: null,
+      stopLoss: sl,
+      takeProfit: tp,
     });
     setSubmitting(false);
     const label = `${orderSide === "buy" ? "Buy" : "Sell"} ${qtyNum} ${symbol} ${mode.toUpperCase()}`;

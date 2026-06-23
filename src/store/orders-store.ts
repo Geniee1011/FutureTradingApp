@@ -37,6 +37,11 @@ interface OrdersState {
     id: string,
     changes: { price?: number | null; stopLoss?: number | null; takeProfit?: number | null },
   ) => Promise<{ ok: boolean; error?: string }>;
+  /** Attach / update / remove a protective bracket on an open position (chart +SL/+TP). */
+  setPositionBracket: (
+    symbol: string,
+    changes: { stopLoss?: number | null; takeProfit?: number | null },
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** Re-fetch positions + orders from the backend. */
   refresh: () => Promise<void>;
   /** Internal: apply a fill to the net position book (mock mode). */
@@ -291,6 +296,28 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       ),
     }));
     return { ok: true };
+  },
+
+  setPositionBracket: async (symbol, changes) => {
+    const token = getAuthToken();
+    if (!USE_MOCK_FEED && API_BASE && token) {
+      try {
+        const res = await fetch(`${API_BASE}/api/positions/bracket`, {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify({ symbol, ...changes }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (res.ok && data.ok) {
+          await get().refresh();
+          return { ok: true };
+        }
+        return { ok: false, error: data.error ?? "Could not attach bracket." };
+      } catch {
+        return { ok: false, error: "Could not reach the server." };
+      }
+    }
+    return { ok: true }; // mock mode: brackets on positions aren't simulated
   },
 
   applyPositionUpdate: (symbol, markPrice, unrealizedPnl) => {

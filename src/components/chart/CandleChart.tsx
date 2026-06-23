@@ -143,6 +143,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const modifyOrder = useOrdersStore((s) => s.modifyOrder);
   const cancelOrder = useOrdersStore((s) => s.cancelOrder);
   const closePosition = useOrdersStore((s) => s.closePosition);
+  const setPositionBracket = useOrdersStore((s) => s.setPositionBracket);
   const allOrders = useOrdersStore((s) => s.orders);
   const allPositions = useOrdersStore((s) => s.positions);
   const theme = useThemeStore((s) => s.theme);
@@ -869,6 +870,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
     if (!res.ok) flash(`✗ ${res.error ?? "Could not add " + which}`);
   }
 
+  // Attach a bracket leg to the OPEN position (chart +SL/+TP on the position line),
+  // default 20 ticks off the average entry; the trader drags the leg to fine-tune.
+  async function addPositionBracket(which: "SL" | "TP") {
+    if (!position) return;
+    const dir = position.side === "buy" ? 1 : -1;
+    const offset = 20 * tickSize;
+    const px = which === "SL" ? round(position.avgPrice - dir * offset) : round(position.avgPrice + dir * offset);
+    const res = await setPositionBracket(symbol, which === "SL" ? { stopLoss: px } : { takeProfit: px });
+    if (!res.ok) flash(`✗ ${res.error ?? "Could not add " + which}`);
+  }
+
   // Remove a level: a pending bracket clears that field; an exit leg cancels the order.
   async function removeLevel(lvl: LevelPos) {
     const res = lvl.isLeg
@@ -963,8 +975,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
             const isPosition = t.kind === "position";
             const isEntry = t.role === "entry";
             const o = visibleOrders.find((x) => x.id === t.orderId);
-            const hasSl = o?.slPrice != null && o.slPrice > 0;
-            const hasTp = o?.tpPrice != null && o.tpPrice > 0;
+            // For a pending entry, SL/TP live on the order; for a position they're exit legs.
+            const hasSl = isPosition ? visibleOrders.some((x) => x.bracketRole === "SL") : o?.slPrice != null && o.slPrice > 0;
+            const hasTp = isPosition ? visibleOrders.some((x) => x.bracketRole === "TP") : o?.tpPrice != null && o.tpPrice > 0;
             // Position entry + working entry = neutral blue (distinct from green TP / red SL
             // / green price marker); SL = red, TP = green.
             const tone = isEntry ? "bg-[#7c9cff] text-black" : t.role === "SL" ? "bg-short/90 text-white" : "bg-long/90 text-black";
@@ -988,13 +1001,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
               >
                 <span>{label}</span>
                 <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
-                {!isPosition && isEntry && !hasSl && (
-                  <button type="button" title="Add stop loss" onMouseDown={stop} onClick={() => addBracket(t.orderId, "SL")} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                {isEntry && !hasSl && (
+                  <button type="button" title="Add stop loss" onMouseDown={stop} onClick={() => (isPosition ? addPositionBracket("SL") : addBracket(t.orderId, "SL"))} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
                     +SL
                   </button>
                 )}
-                {!isPosition && isEntry && !hasTp && (
-                  <button type="button" title="Add take profit" onMouseDown={stop} onClick={() => addBracket(t.orderId, "TP")} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                {isEntry && !hasTp && (
+                  <button type="button" title="Add take profit" onMouseDown={stop} onClick={() => (isPosition ? addPositionBracket("TP") : addBracket(t.orderId, "TP"))} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
                     +TP
                   </button>
                 )}
