@@ -123,6 +123,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
   // rAF loop positions the pills from these so a drag isn't snapped back by the
   // order's (still-unchanged) stored price until the modify persists.
   const dragOverrideRef = useRef<Map<string, number>>(new Map());
+  // Active "drag to add SL/TP" gesture — drives a live preview zone (fill + USD P&L)
+  // between the entry and the dragged level while +SL/+TP is being placed.
+  const addDragRef = useRef<{ entryPrice: number; price: number; side: Side; qty: number } | null>(null);
   const lastTagsRef = useRef<string>("");
   const loadCleanupRef = useRef<(() => void) | null>(null);
   const [resolution, setResolution] = useState(60);
@@ -733,6 +736,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
             }
           }
         }
+        // Live preview zone while dragging +SL/+TP to add a level.
+        const ad = addDragRef.current;
+        if (ad) {
+          const ey = series.priceToCoordinate(ad.entryPrice);
+          const ly = series.priceToCoordinate(ad.price);
+          if (ey != null && ly != null) {
+            const dir = ad.side === "buy" ? 1 : -1;
+            const pnl = (ad.price - ad.entryPrice) * dir * ad.qty * multiplier;
+            zonesOut.push({ key: "add-preview", top: Math.min(ey, ly as number), height: Math.abs((ly as number) - ey), lineY: ly as number, pnl, right });
+          }
+        }
         const key =
           out.map((t) => `${t.lineKey}:${Math.round(t.y)}:${t.price}`).join("|") +
           "#" +
@@ -890,27 +904,73 @@ export function CandleChart({ symbol }: { symbol: string }) {
     window.addEventListener("mouseup", onUp);
   }
 
-  // Attach a bracket leg to a pending order at a default offset (20 ticks), oriented
-  // to the side (stop adverse, target favourable). The trader then drags to fine-tune.
-  async function addBracket(orderId: string, which: "SL" | "TP") {
+  // Attach a bracket leg to a pending order. `priceOverride` (from the drag-to-add
+  // gesture) sets the level; without it we default to 20 ticks off the entry, oriented
+  // to the side (stop adverse, target favourable).
+  async function addBracket(orderId: string, which: "SL" | "TP", priceOverride?: number) {
     const o = visibleOrders.find((x) => x.id === orderId);
     if (!o || o.price == null) return;
     const dir = o.side === "buy" ? 1 : -1;
     const offset = 20 * tickSize;
-    const price = which === "SL" ? round(o.price - dir * offset) : round(o.price + dir * offset);
+    const price = priceOverride ?? (which === "SL" ? round(o.price - dir * offset) : round(o.price + dir * offset));
     const res = await modifyOrder(orderId, which === "SL" ? { stopLoss: price } : { takeProfit: price });
     if (!res.ok) flash(`✗ ${res.error ?? "Could not add " + which}`);
   }
 
-  // Attach a bracket leg to the OPEN position (chart +SL/+TP on the position line),
-  // default 20 ticks off the average entry; the trader drags the leg to fine-tune.
-  async function addPositionBracket(which: "SL" | "TP") {
+  // Attach a bracket leg to the OPEN position. `priceOverride` from the drag gesture, else
+  // 20 ticks off the average entry; the trader can drag the leg further to fine-tune.
+  async function addPositionBracket(which: "SL" | "TP", priceOverride?: number) {
     if (!position) return;
     const dir = position.side === "buy" ? 1 : -1;
     const offset = 20 * tickSize;
-    const px = which === "SL" ? round(position.avgPrice - dir * offset) : round(position.avgPrice + dir * offset);
+    const px = priceOverride ?? (which === "SL" ? round(position.avgPrice - dir * offset) : round(position.avgPrice + dir * offset));
     const res = await setPositionBracket(symbol, which === "SL" ? { stopLoss: px } : { takeProfit: px });
     if (!res.ok) flash(`✗ ${res.error ?? "Could not add " + which}`);
+  }
+
+  // Drag-to-add: press +SL/+TP and drag to place the level in one motion (a live preview
+  // line follows the cursor). Drop persists it; a plain click (no drag) uses the default.
+  function startAddBracketDrag(e: React.MouseEvent, t: LevelPos, which: "SL" | "TP") {
+    e.preventDefault();
+    e.stopPropagation();
+    const series = candleRef.current;
+    const container = containerRef.current;
+    const isPos = t.kind === "position";
+    const entryPrice = isPos ? position?.avgPrice : visibleOrders.find((o) => o.id === t.orderId)?.price;
+    const side = isPos ? position?.side : t.side;
+    if (!series || !container || entryPrice == null || side == null) return;
+    const dir = side === "buy" ? 1 : -1;
+    const offset = 20 * tickSize;
+    const defaultPx = which === "SL" ? round(entryPrice - dir * offset) : round(entryPrice + dir * offset);
+    const qty = isPos ? position!.quantity : visibleOrders.find((o) => o.id === t.orderId)?.quantity ?? 1;
+    const preview = series.createPriceLine({
+      price: defaultPx,
+      color: which === "SL" ? "#ea3943" : "#16c784",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true,
+      title: which,
+    });
+    addDragRef.current = { entryPrice, price: defaultPx, side, qty }; // seeds the preview zone
+    let dragged: number | undefined;
+
+    const onMove = (ev: MouseEvent) => {
+      const raw = series.coordinateToPrice(ev.clientY - container.getBoundingClientRect().top);
+      if (raw == null) return;
+      dragged = snap(raw as number);
+      preview.applyOptions({ price: dragged });
+      if (addDragRef.current) addDragRef.current.price = dragged;
+    };
+    const onUp = async () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (isPos) await addPositionBracket(which, dragged);
+      else await addBracket(t.orderId, which, dragged);
+      series.removePriceLine(preview); // real line + zone are drawn by the refresh
+      addDragRef.current = null;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   }
 
   // Remove a level: a pending bracket clears that field; an exit leg cancels the order.
@@ -1034,12 +1094,12 @@ export function CandleChart({ symbol }: { symbol: string }) {
                 <span>{label}</span>
                 <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
                 {isEntry && !hasSl && (
-                  <button type="button" title="Add stop loss" onMouseDown={stop} onClick={() => (isPosition ? addPositionBracket("SL") : addBracket(t.orderId, "SL"))} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                  <button type="button" title="Drag to add stop loss" onMouseDown={(e) => startAddBracketDrag(e, t, "SL")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
                     +SL
                   </button>
                 )}
                 {isEntry && !hasTp && (
-                  <button type="button" title="Add take profit" onMouseDown={stop} onClick={() => (isPosition ? addPositionBracket("TP") : addBracket(t.orderId, "TP"))} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                  <button type="button" title="Drag to add take profit" onMouseDown={(e) => startAddBracketDrag(e, t, "TP")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
                     +TP
                   </button>
                 )}
@@ -1048,7 +1108,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
                   title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
                   onMouseDown={stop}
                   onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
-                  className="text-[11px] leading-none opacity-80 hover:opacity-100"
+                  className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
                 >
                   ✕
                 </button>
