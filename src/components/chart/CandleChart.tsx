@@ -51,6 +51,13 @@ const HISTORY_COUNT: Record<number, number> = {
 };
 const DEFAULT_HISTORY_COUNT = 500;
 
+// Gaps up to this span are forward-filled with flat carry-forward bars so the series
+// stays contiguous — lightweight-charts leaves empty space for missing intervals, which
+// is what produced the "gap" between Fri-close→Sun-open and brief feed interruptions.
+// 4h covers feed drops + the daily maintenance halt; larger gaps (weekends) are left
+// rather than inserting thousands of flat bars.
+const MAX_FILL_GAP_SEC = 4 * 3600;
+
 // Bars shown by default after a load / reset. The full history above stays scrollable
 // to the left — this just keeps the opening view a readable recent window instead of
 // squashing all ~7 days into hairline candles. 480 ≈ 8 hours at 1m.
@@ -312,12 +319,26 @@ export function CandleChart({ symbol }: { symbol: string }) {
 
       const render = (raw: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
         if (!candleRef.current || !volumeRef.current) return;
-        // Drop any whitespace/invalid bars (non-finite or non-positive OHLC). Without
-        // this, an empty bar shows as a slot with no candle — which is what produced the
-        // empty stretch across the weekend. lightweight-charts then collapses the rest.
-        const candles = raw.filter(
+        // Drop any whitespace/invalid bars (non-finite or non-positive OHLC).
+        const valid = raw.filter(
           (c) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close) && c.low > 0,
         );
+        // Forward-fill short gaps so the series is contiguous (lightweight-charts spaces
+        // bars by time and shows empty space for any missing interval). Flat, zero-volume
+        // carry-forward bars; gaps beyond MAX_FILL_GAP_SEC (weekends) are left as-is.
+        const candles: typeof valid = [];
+        for (let i = 0; i < valid.length; i++) {
+          if (i > 0) {
+            const prev = valid[i - 1]!;
+            const span = valid[i]!.time - prev.time;
+            if (span > resolution && span <= MAX_FILL_GAP_SEC) {
+              for (let t = prev.time + resolution; t < valid[i]!.time; t += resolution) {
+                candles.push({ time: t, open: prev.close, high: prev.close, low: prev.close, close: prev.close, volume: 0 });
+              }
+            }
+          }
+          candles.push(valid[i]!);
+        }
         const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
           time: c.time as UTCTimestamp,
           open: c.open,
@@ -459,6 +480,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
     let next: CandlestickData<UTCTimestamp>;
     let nextVol: HistogramData<UTCTimestamp>;
     if (!last || bucket > (last.time as number)) {
+      // Forward-fill skipped intervals (a brief feed drop) with flat carry-forward bars
+      // so no empty space opens at the live edge. Capped — a large gap is left to history.
+      if (last) {
+        const lastT = last.time as number;
+        const lastClose = last.close;
+        if (bucket > lastT + resolution && bucket - lastT <= MAX_FILL_GAP_SEC) {
+          for (let t = lastT + resolution; t < bucket; t += resolution) {
+            candleRef.current.update({ time: t as UTCTimestamp, open: lastClose, high: lastClose, low: lastClose, close: lastClose });
+          }
+        }
+      }
       next = { time: bucket, open: price, high: price, low: price, close: price };
       nextVol = { time: bucket, value: size, color: upColor }; // new bar opens flat → up tone
     } else {
