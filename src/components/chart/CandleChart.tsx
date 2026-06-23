@@ -656,6 +656,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
         // Sit the pill just left of the price axis (whose width varies by price).
         const right = Math.round(chartRef.current?.priceScale("right").width() ?? 56) + 4;
         const ov = dragOverrideRef.current;
+        // Y of a price, clamped to the chart edge when it's dragged off-range (otherwise
+        // priceToCoordinate returns null and the zone/level silently vanishes near the top/bottom).
+        const chartH = containerRef.current?.clientHeight ?? 0;
+        const yAt = (price: number, ref: number): number => {
+          const c = series.priceToCoordinate(price);
+          return c != null ? (c as number) : price >= ref ? 0 : chartH;
+        };
         const out: LevelPos[] = [];
         const push = (lineKey: string, orderId: string, role: LevelPos["role"], isLeg: boolean, base: number, o: Order) => {
           // Release a drag override once the persisted price has caught up to the dragged
@@ -710,10 +717,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
           const band = (lineKey: string, base: number | null | undefined) => {
             if (base == null || base <= 0) return;
             const p = ov.get(lineKey) ?? base;
-            const ly = series.priceToCoordinate(p);
-            if (ly == null) return;
+            const ly = yAt(p, entryP);
             const pnl = (p - entryP) * dir * o.quantity * multiplier;
-            zonesOut.push({ key: lineKey, top: Math.min(ey, ly as number), height: Math.abs((ly as number) - ey), lineY: ly as number, pnl, right });
+            zonesOut.push({ key: lineKey, top: Math.min(ey, ly), height: Math.abs(ly - ey), lineY: ly, pnl, right });
           };
           band(`${o.id}:TP`, o.tpPrice);
           band(`${o.id}:SL`, o.slPrice);
@@ -729,23 +735,20 @@ export function CandleChart({ symbol }: { symbol: string }) {
             for (const leg of visibleOrders) {
               if (!leg.bracketRole || leg.price == null) continue;
               const lp = ov.get(leg.id) ?? leg.price;
-              const ly = series.priceToCoordinate(lp);
-              if (ly == null) continue;
+              const ly = yAt(lp, entryP);
               const pnl = (lp - entryP) * dir * position.quantity * multiplier;
-              zonesOut.push({ key: `poszone:${leg.id}`, top: Math.min(ey, ly as number), height: Math.abs((ly as number) - ey), lineY: ly as number, pnl, right });
+              zonesOut.push({ key: `poszone:${leg.id}`, top: Math.min(ey, ly), height: Math.abs(ly - ey), lineY: ly, pnl, right });
             }
           }
         }
         // Live preview zone while dragging +SL/+TP to add a level.
         const ad = addDragRef.current;
         if (ad) {
-          const ey = series.priceToCoordinate(ad.entryPrice);
-          const ly = series.priceToCoordinate(ad.price);
-          if (ey != null && ly != null) {
-            const dir = ad.side === "buy" ? 1 : -1;
-            const pnl = (ad.price - ad.entryPrice) * dir * ad.qty * multiplier;
-            zonesOut.push({ key: "add-preview", top: Math.min(ey, ly as number), height: Math.abs((ly as number) - ey), lineY: ly as number, pnl, right });
-          }
+          const ey = yAt(ad.entryPrice, ad.price);
+          const ly = yAt(ad.price, ad.entryPrice);
+          const dir = ad.side === "buy" ? 1 : -1;
+          const pnl = (ad.price - ad.entryPrice) * dir * ad.qty * multiplier;
+          zonesOut.push({ key: "add-preview", top: Math.min(ey, ly), height: Math.abs(ly - ey), lineY: ly, pnl, right });
         }
         const key =
           out.map((t) => `${t.lineKey}:${Math.round(t.y)}:${t.price}`).join("|") +
