@@ -32,6 +32,11 @@ interface OrdersState {
   placeOrder: (input: PlaceOrderInput) => Promise<{ ok: boolean; order?: Order; error?: string }>;
   closePosition: (symbol: string) => Promise<{ ok: boolean; error?: string }>;
   cancelOrder: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Modify a working order's price and/or its bracket SL/TP (chart drag-to-edit). */
+  modifyOrder: (
+    id: string,
+    changes: { price?: number | null; stopLoss?: number | null; takeProfit?: number | null },
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** Re-fetch positions + orders from the backend. */
   refresh: () => Promise<void>;
   /** Internal: apply a fill to the net position book (mock mode). */
@@ -245,6 +250,43 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       orders: s.orders.map((o) =>
         o.id === id && (o.status === "open" || o.status === "partial")
           ? { ...o, status: "cancelled", reason: "Cancelled by user", updatedAt: Date.now() }
+          : o,
+      ),
+    }));
+    return { ok: true };
+  },
+
+  modifyOrder: async (id, changes) => {
+    const token = getAuthToken();
+    if (!USE_MOCK_FEED && API_BASE && token) {
+      try {
+        const res = await fetch(`${API_BASE}/api/orders/${encodeURIComponent(id)}/modify`, {
+          method: "POST",
+          headers: authHeaders(token),
+          body: JSON.stringify(changes),
+        });
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        if (res.ok && data.ok) {
+          await get().refresh();
+          return { ok: true };
+        }
+        return { ok: false, error: data.error ?? "Modify failed." };
+      } catch {
+        return { ok: false, error: "Could not reach the server." };
+      }
+    }
+
+    // Mock fallback: update local order fields in place.
+    set((s) => ({
+      orders: s.orders.map((o) =>
+        o.id === id && (o.status === "open" || o.status === "partial")
+          ? {
+              ...o,
+              price: changes.price ?? o.price,
+              slPrice: changes.stopLoss === undefined ? o.slPrice : changes.stopLoss,
+              tpPrice: changes.takeProfit === undefined ? o.tpPrice : changes.takeProfit,
+              updatedAt: Date.now(),
+            }
           : o,
       ),
     }));

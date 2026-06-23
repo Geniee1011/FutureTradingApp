@@ -11,6 +11,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type IPriceLine,
+  type AutoscaleInfo,
   type CandlestickData,
   type HistogramData,
   type UTCTimestamp,
@@ -21,7 +22,7 @@ import { useOrdersStore } from "@/store/orders-store";
 import { useThemeStore } from "@/store/theme-store";
 import { getChartColors } from "@/lib/chart-theme";
 import { getInstrument } from "@/lib/constants";
-import type { OrderType, Side } from "@/lib/types";
+import type { Order, OrderType, Side } from "@/lib/types";
 import { formatPrice, cn } from "@/lib/utils";
 
 const RESOLUTIONS = [
@@ -32,32 +33,58 @@ const RESOLUTIONS = [
   { label: "1D", seconds: 86400 },
 ];
 
-// Order labels the trader dismissed from the chart, persisted so they stay hidden
-// across reloads (component state alone resets on refresh). Keyed by order id.
-const HIDDEN_LABELS_KEY = "tp.hiddenOrderLabels";
-function loadHiddenLabels(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.localStorage.getItem(HIDDEN_LABELS_KEY);
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-  } catch {
-    return new Set();
-  }
-}
-function saveHiddenLabels(ids: Set<string>): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(HIDDEN_LABELS_KEY, JSON.stringify([...ids]));
-  } catch {
-    /* storage disabled / over quota — non-fatal */
-  }
-}
+// Minimum bars before we reveal the chart (hide the loading spinner) and lock the
+// initial fit. Below this we keep the spinner up and re-fit each frame, so the
+// sparse "live bars only" first response from the backend isn't shown as a lonely
+// 1–2 candle sliver while the full history backfills.
+const REVEAL_MIN_BARS = 30;
+
+// How many bars of history to request per resolution. 1m is sized to ~7 trading
+// days (CME trades ~23h/day ≈ 1,380 one-minute bars/day); coarser frames cover
+// proportionally longer spans. The backend widens its fetch window to match.
+const HISTORY_COUNT: Record<number, number> = {
+  60: 9600, // 1m  → ~7 trading days
+  300: 4000, // 5m  → ~14 trading days
+  900: 2000, // 15m → ~3 weeks
+  3600: 1200, // 1h  → ~6 weeks
+  86400: 500, // 1D  → ~2 years
+};
+const DEFAULT_HISTORY_COUNT = 500;
+
+// Bars shown by default after a load / reset. The full history above stays scrollable
+// to the left — this just keeps the opening view a readable recent window instead of
+// squashing all ~7 days into hairline candles. 480 ≈ 8 hours at 1m.
+const DEFAULT_VISIBLE_BARS = 480;
 
 /** Pending click-to-trade ticket: chart pixel position + the price clicked. */
 interface ChartTicket {
   x: number;
   y: number;
   price: number;
+}
+
+/** A draggable order level (entry, or a bracket SL/TP) positioned on the chart. */
+interface LevelPos {
+  lineKey: string; // key into orderLinesRef + the drag-override map
+  orderId: string;
+  role: "entry" | "SL" | "TP";
+  isLeg: boolean; // true = a live exit leg on a filled position; false = pending entry / its bracket
+  y: number; // pixel Y of the line
+  price: number;
+  side: Side;
+  qty: number;
+  type: OrderType;
+  right: number; // px from the right edge (clears the price axis)
+}
+
+/** A shaded profit (entry↔TP) or risk (entry↔SL) zone behind a pending order. */
+interface ZonePos {
+  key: string;
+  top: number; // pixel Y of the band's top
+  height: number; // band height in px
+  lineY: number; // pixel Y of the TP/SL line (where the P&L badge sits)
+  pnl: number; // USD P&L if this level is reached (signed)
+  right: number;
 }
 
 /**
@@ -73,10 +100,20 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const lastCandleRef = useRef<CandlestickData<UTCTimestamp> | null>(null);
   const lastVolumeRef = useRef<HistogramData<UTCTimestamp> | null>(null);
+  const barCountRef = useRef(0); // bars currently in the series — drives the default visible window
   const priceLineRef = useRef<IPriceLine | null>(null);
   const slLineRef = useRef<IPriceLine | null>(null);
   const tpLineRef = useRef<IPriceLine | null>(null);
   const orderLinesRef = useRef<Map<string, IPriceLine>>(new Map());
+  // Active working-order price levels (entry + SL/TP) for THIS symbol, fed into the
+  // candle series' autoscale so an order's bracket is included when the view fits —
+  // otherwise a tightly-zoomed vertical range hides SL/TP that sit beyond the candles.
+  const orderLevelsRef = useRef<number[]>([]);
+  // Live price overrides while a level is being dragged, keyed by lineKey (orderId
+  // for the entry/leg line, `${orderId}:SL` / `:TP` for a pending bracket leg). The
+  // rAF loop positions the pills from these so a drag isn't snapped back by the
+  // order's (still-unchanged) stored price until the modify persists.
+  const dragOverrideRef = useRef<Map<string, number>>(new Map());
   const lastTagsRef = useRef<string>("");
   const loadCleanupRef = useRef<(() => void) | null>(null);
   const [resolution, setResolution] = useState(60);
@@ -87,10 +124,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [slInput, setSlInput] = useState("");
   const [tpInput, setTpInput] = useState("");
   const [placed, setPlaced] = useState<string | null>(null);
-  const [orderTags, setOrderTags] = useState<{ id: string; y: number; side: Side; label: string; right: number }[]>([]);
+  const [levels, setLevels] = useState<LevelPos[]>([]);
+  const [zones, setZones] = useState<ZonePos[]>([]);
   // Order labels dismissed from the chart (hidden ONLY — the orders stay active).
   // Seeded from localStorage so dismissals survive a page refresh.
-  const [hiddenTagIds, setHiddenTagIds] = useState<Set<string>>(loadHiddenLabels);
 
   // Clear the bracket inputs whenever the ticket closes.
   useEffect(() => {
@@ -101,22 +138,23 @@ export function CandleChart({ symbol }: { symbol: string }) {
   }, [ticket]);
 
   const placeOrder = useOrdersStore((s) => s.placeOrder);
+  const modifyOrder = useOrdersStore((s) => s.modifyOrder);
+  const cancelOrder = useOrdersStore((s) => s.cancelOrder);
   const allOrders = useOrdersStore((s) => s.orders);
   const theme = useThemeStore((s) => s.theme);
 
   // Resting (working) limit/stop orders for this symbol — drawn on the chart as
-  // cancellable lines (DOM-style). Market orders fill instantly so never appear.
-  const openOrders = allOrders.filter(
+  // draggable lines. Market orders fill instantly so never appear here.
+  const visibleOrders = allOrders.filter(
     (o) => o.symbol === symbol && (o.status === "open" || o.status === "partial") && o.price != null,
   );
-  // Hidden orders are dropped entirely from the chart — no line, no axis label, no tag.
-  const visibleOrders = openOrders.filter((o) => !hiddenTagIds.has(o.id));
   const visibleKey = visibleOrders
-    .map((o) => `${o.id}:${o.price}:${o.side}:${o.type}:${o.bracketRole ?? ""}`)
+    .map((o) => `${o.id}:${o.price}:${o.side}:${o.type}:${o.bracketRole ?? ""}:${o.slPrice ?? ""}:${o.tpPrice ?? ""}`)
     .join("|");
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
   const tickSize = inst?.tickSize ?? 0.01;
+  const multiplier = inst?.multiplier ?? 1; // USD per 1.00 of price move, per contract
   const round = (p: number) => Math.round(p * 10 ** precision) / 10 ** precision;
 
   // Build the chart once.
@@ -149,6 +187,19 @@ export function CandleChart({ symbol }: { symbol: string }) {
       wickUpColor: c.up,
       wickDownColor: c.down,
       priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision },
+      // Extend the auto-fit range to include any working-order levels (entry/SL/TP),
+      // so fitting the price scale never leaves a placed bracket off-screen.
+      autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
+        const res = original();
+        const levels = orderLevelsRef.current;
+        if (!res || !res.priceRange || levels.length === 0) return res;
+        let { minValue, maxValue } = res.priceRange;
+        for (const lv of levels) {
+          minValue = Math.min(minValue, lv);
+          maxValue = Math.max(maxValue, lv);
+        }
+        return { ...res, priceRange: { minValue, maxValue } };
+      },
     });
 
     const volume = chart.addSeries(HistogramSeries, {
@@ -200,6 +251,21 @@ export function CandleChart({ symbol }: { symbol: string }) {
     volumeRef.current?.applyOptions({ color: c.volume });
   }, [theme]);
 
+  // Frame the opening view on the most recent `DEFAULT_VISIBLE_BARS` bars (the deep
+  // history stays scrollable to the left), then release price auto-fit so vertical
+  // panning works. Shared by the initial load and the reset-zoom button.
+  const showDefaultView = useCallback((len: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    if (len > DEFAULT_VISIBLE_BARS) {
+      chart.timeScale().setVisibleLogicalRange({ from: len - DEFAULT_VISIBLE_BARS, to: len });
+    } else {
+      chart.timeScale().fitContent();
+    }
+    chart.priceScale("right").applyOptions({ autoScale: true });
+    window.setTimeout(() => chartRef.current?.priceScale("right").applyOptions({ autoScale: false }), 60);
+  }, []);
+
   // Load history for the current symbol/resolution, re-polling a few times until
   // the backend's background cache warms (its Historical-data hop can be slow/
   // rate-limited from some hosts). So the FIRST response can be thin (live bars
@@ -213,12 +279,33 @@ export function CandleChart({ symbol }: { symbol: string }) {
       let timer: ReturnType<typeof setTimeout> | null = null;
       let attempt = 0;
       let bestCount = 0;
-      let fitted = !showSpinner; // only auto-fit on a spinner load — never yank the view on a silent refresh
+      let noGrowth = 0; // consecutive polls that added no bars (deep backfill has landed)
+      let framed = false; // recent-window framing locked once the deep history is in
+      const target = HISTORY_COUNT[resolution] ?? DEFAULT_HISTORY_COUNT;
       if (showSpinner) setLoading(true);
       setTicket(null);
 
-      const render = (candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
+      // Symbol/resolution change (spinner load): drop the PREVIOUS instrument's
+      // bars at once. Otherwise its (wrong-price) candles and locked price scale
+      // linger on-screen until the new history arrives over the slow Historical
+      // hop — e.g. switching to NQ briefly shows ES's ~7560 range. A silent
+      // refresh (tab refocus) must NOT clear — that would blank a good chart.
+      if (showSpinner) {
+        candleRef.current?.setData([]);
+        volumeRef.current?.setData([]);
+        lastCandleRef.current = null;
+        lastVolumeRef.current = null;
+        chartRef.current?.priceScale("right").applyOptions({ autoScale: true });
+      }
+
+      const render = (raw: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
         if (!candleRef.current || !volumeRef.current) return;
+        // Drop any whitespace/invalid bars (non-finite or non-positive OHLC). Without
+        // this, an empty bar shows as a slot with no candle — which is what produced the
+        // empty stretch across the weekend. lightweight-charts then collapses the rest.
+        const candles = raw.filter(
+          (c) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close) && c.low > 0,
+        );
         const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
           time: c.time as UTCTimestamp,
           open: c.open,
@@ -233,38 +320,56 @@ export function CandleChart({ symbol }: { symbol: string }) {
         }));
         candleRef.current.setData(candleData);
         volumeRef.current.setData(volData);
+        barCountRef.current = candleData.length;
         lastCandleRef.current = candleData[candleData.length - 1] ?? null;
         lastVolumeRef.current = volData[volData.length - 1] ?? null;
-        if (!fitted) {
-          // Fit this load's data, then RELEASE the price scale's auto-fit so traders
-          // can pan up/down immediately (auto-scale otherwise snaps the view back and
-          // blocks vertical drag until you manually rescale the axis).
-          const chart = chartRef.current;
-          chart?.timeScale().fitContent();
-          chart?.priceScale("right").applyOptions({ autoScale: true }); // fit price to this data
-          window.setTimeout(() => chartRef.current?.priceScale("right").applyOptions({ autoScale: false }), 60);
-          fitted = true;
+        if (showSpinner && !framed) {
+          // Frame a readable recent window (deep history stays scrollable to the left)
+          // and release the price auto-fit so traders can pan vertically. RE-APPLY on
+          // each frame while the data is still deepening: a shallow→deep load adds bars
+          // on the LEFT, shifting logical indices, so a one-time fit would leave the
+          // view pinned to the wrong bars once the full history lands. Re-anchoring to
+          // the last N bars keeps the same recent time window (no visible jump). A
+          // silent refresh (showSpinner=false) never re-frames — it keeps the user's view.
+          showDefaultView(candleData.length);
+          if (candleData.length >= target * 0.9 || candleData.length >= target - 1) framed = true;
         }
       };
 
+      // Best response so far, held back (not painted) until we're ready to reveal —
+      // so the sparse "live bars only" first frames never show behind the spinner.
+      let latest: Parameters<typeof render>[0] = [];
       const poll = async () => {
         attempt += 1;
         const candles = await getWsClient()
-          .getHistory(symbol, resolution, 240)
+          .getHistory(symbol, resolution, target)
           .catch(() => [] as Awaited<ReturnType<ReturnType<typeof getWsClient>["getHistory"]>>);
         if (cancelled) return;
-        // Only replace the series when this response is at least as complete as the
-        // best so far — avoids flicker if a retry briefly returns fewer bars.
+        // Keep the most complete response so far — avoids flicker if a retry briefly
+        // returns fewer bars. Track no-growth polls so we can stop once the deep
+        // Historical window (warmed in the background) has fully landed.
         if (candles.length && candles.length >= bestCount) {
+          noGrowth = candles.length > bestCount ? 0 : noGrowth + 1;
           bestCount = candles.length;
-          render(candles);
-          setLoading(false);
-        } else if (!candles.length && attempt === 1) {
-          setLoading(false); // nothing yet, but stop blocking the view
+          latest = candles;
+        } else {
+          noGrowth += 1;
         }
-        // Keep polling until we have a substantial backfill (or give up after ~40s).
-        if (bestCount < 60 && attempt < 9) {
-          timer = setTimeout(poll, attempt < 3 ? 2500 : 5000);
+        // Reveal once a real backfill has landed, OR after a few attempts so a slow/
+        // thin Historical hop still surfaces something instead of spinning forever.
+        // During a spinner load we DON'T paint before reveal, so the chart area stays
+        // blank (not a 1–2 bar sliver) behind the overlay. A silent refresh has no
+        // spinner, so it paints each response immediately as before.
+        const reveal = bestCount >= REVEAL_MIN_BARS || attempt >= 3;
+        if (latest.length && (!showSpinner || reveal)) render(latest);
+        if (reveal) setLoading(false);
+        // Keep polling while the deep history is still warming in the background: the
+        // backend serves the shallow cache first and deepens it asynchronously, so the
+        // first responses are short. Stop once we're near the requested depth, growth
+        // has stalled (deep data landed or none more exists), or we hit the cap (~35s).
+        const enough = bestCount >= target * 0.9;
+        if (!enough && noGrowth < 3 && attempt < 12) {
+          timer = setTimeout(poll, attempt < 4 ? 2000 : 4000);
         }
       };
 
@@ -274,7 +379,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
       };
       void poll();
     },
-    [symbol, resolution],
+    [symbol, resolution, showDefaultView],
   );
 
   // Initial load + whenever symbol/resolution changes.
@@ -296,13 +401,44 @@ export function CandleChart({ symbol }: { symbol: string }) {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [loadHistory]);
 
+  // Heal gaps from a dropped quote feed. The chart builds live bars from the quote
+  // stream, so if the WS drops (even with the tab in the foreground) no bars form
+  // for that span — leaving an empty stretch like 11:57–12:08. On RECONNECT, silently
+  // re-pull history (the backend keeps a continuous server-side live-bar buffer) so
+  // the gap fills in. Only fires on a real reconnect, not the initial connect.
+  const wsStatus = useMarketStore((s) => s.status);
+  const prevStatusRef = useRef(wsStatus);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = wsStatus;
+    if (wsStatus === "connected" && (prev === "reconnecting" || prev === "disconnected")) {
+      loadHistory(false);
+    }
+  }, [wsStatus, loadHistory]);
+
+  // Self-heal gaps over time. A gap can form when neither side recorded bars for a
+  // span (e.g. a brief backend live-stream drop). The backend's Historical backfill
+  // fills that window within the following minutes, so a low-frequency silent re-pull
+  // picks up the healed data and closes the gap — no user action needed. Gated on tab
+  // visibility (the visibilitychange handler covers the return-to-foreground case).
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.visibilityState === "visible") loadHistory(false);
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [loadHistory]);
+
   // Update the forming candle from the live quote.
   const quote = useMarketStore((s) => s.quotes[symbol]);
   useEffect(() => {
     if (!quote || !candleRef.current || loading) return;
+    const price = quote.price;
+    // Ignore quotes with no real price (e.g. a stale/empty snapshot when the market is
+    // closed). Building a bar from one yields a NaN/zero-price candle that renders as an
+    // empty slot — that's what opened the weekend "gap" between Fri close and Sun open.
+    if (!Number.isFinite(price) || price <= 0) return;
     const bucket = (Math.floor(quote.ts / 1000 / resolution) * resolution) as UTCTimestamp;
     const last = lastCandleRef.current;
-    const price = quote.price;
 
     const size = quote.lastSize ?? 0;
     const upColor = "#16c78455";
@@ -407,13 +543,32 @@ export function CandleChart({ symbol }: { symbol: string }) {
         o.id,
         series.createPriceLine({
           price: o.price as number,
-          color: o.side === "buy" ? "#16c784" : "#ea3943",
+          // Neutral blue for the entry — distinct from the green TP and red SL (and the
+          // green last-price marker). Buy/sell is conveyed by the pill's BUY/SELL label.
+          color: "#7c9cff",
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: "",
+          axisLabelVisible: false, // the draggable pill carries the price label
         }),
       );
+      // A working bracket entry carries its SL/TP until it fills (only then do the
+      // real exit legs exist). Draw them as labelled preview lines so the trader
+      // sees the protective levels they attached — SL red below, TP green above.
+      const brackets: [string, number | null | undefined, string][] = [
+        [`${o.id}:SL`, o.slPrice, "#ea3943"],
+        [`${o.id}:TP`, o.tpPrice, "#16c784"],
+      ];
+      for (const [key, px, color] of brackets) {
+        const prevB = lines.get(key);
+        if (prevB) series.removePriceLine(prevB);
+        if (px != null && px > 0) {
+          seen.add(key);
+          lines.set(
+            key,
+            series.createPriceLine({ price: px, color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }),
+          );
+        }
+      }
     }
     // Remove lines for orders that closed OR were hidden (no line / no axis label).
     for (const [id, line] of lines) {
@@ -422,33 +577,86 @@ export function CandleChart({ symbol }: { symbol: string }) {
         lines.delete(id);
       }
     }
+    // Feed the working-order levels (entry + bracket SL/TP) into the autoscale provider.
+    orderLevelsRef.current = visibleOrders.flatMap((o) =>
+      [o.price, o.slPrice, o.tpPrice].filter((v): v is number => v != null && v > 0),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey]);
 
-  // Position the HTML cancel tags at each order's price. A rAF loop keeps them
-  // aligned as the chart scrolls / auto-scales (lightweight-charts has no
-  // price-scale event); setState only fires when a rounded Y actually changes.
+  // Position the draggable order pills at each level's price. A rAF loop keeps them
+  // aligned as the chart scrolls / auto-scales (lightweight-charts has no price-scale
+  // event). While a level is being dragged, its price comes from dragOverrideRef so
+  // the pill follows the cursor instead of snapping to the order's stored price.
   useEffect(() => {
     let raf = 0;
     const update = () => {
       const series = candleRef.current;
       if (series) {
-        // Sit the tag just left of the price axis (whose width varies by price).
+        // Sit the pill just left of the price axis (whose width varies by price).
         const right = Math.round(chartRef.current?.priceScale("right").width() ?? 56) + 4;
-        const tags = visibleOrders
-          .map((o) => {
-            const coord = series.priceToCoordinate(o.price as number);
-            if (coord == null) return null;
-            const abbr = o.type === "limit" ? "LMT" : o.type === "stop" ? "STP" : "MKT";
-            const role = o.bracketRole ? ` ${o.bracketRole}` : "";
-            const label = `${o.quantity} ${o.side === "buy" ? "BUY" : "SELL"} ${abbr}${role}`;
-            return { id: o.id, y: coord as number, side: o.side, label, right };
-          })
-          .filter((t): t is { id: string; y: number; side: Side; label: string; right: number } => t !== null);
-        const key = tags.map((t) => `${t.id}:${Math.round(t.y)}:${t.right}`).join("|");
+        const ov = dragOverrideRef.current;
+        const out: LevelPos[] = [];
+        const push = (lineKey: string, orderId: string, role: LevelPos["role"], isLeg: boolean, base: number, o: Order) => {
+          // Release a drag override once the persisted price has caught up to the dragged
+          // value — this is what avoids a snap-back to the old price on drop: we keep the
+          // override through the async modify, then drop it seamlessly when data matches.
+          const ovv = ov.get(lineKey);
+          if (ovv != null && Math.abs(ovv - base) < tickSize / 2) ov.delete(lineKey);
+          const price = ov.get(lineKey) ?? base;
+          const coord = series.priceToCoordinate(price);
+          if (coord == null) return;
+          out.push({ lineKey, orderId, role, isLeg, y: coord as number, price, side: o.side, qty: o.quantity, type: o.type, right });
+        };
+        // Drop overrides whose order/leg is gone (filled/cancelled) so they can't linger.
+        const liveKeys = new Set<string>();
+        for (const o of visibleOrders) {
+          liveKeys.add(o.id);
+          if (!o.bracketRole) {
+            liveKeys.add(`${o.id}:SL`);
+            liveKeys.add(`${o.id}:TP`);
+          }
+        }
+        for (const k of ov.keys()) if (!liveKeys.has(k)) ov.delete(k);
+        for (const o of visibleOrders) {
+          if (o.bracketRole) {
+            // A live exit leg on a filled position — draggable via its own price.
+            push(o.id, o.id, o.bracketRole, true, o.price as number, o);
+          } else {
+            // A pending entry, plus its attached bracket SL/TP (not yet separate orders).
+            push(o.id, o.id, "entry", false, o.price as number, o);
+            if (o.slPrice != null && o.slPrice > 0) push(`${o.id}:SL`, o.id, "SL", false, o.slPrice, o);
+            if (o.tpPrice != null && o.tpPrice > 0) push(`${o.id}:TP`, o.id, "TP", false, o.tpPrice, o);
+          }
+        }
+        // Shaded profit (entry↔TP) / risk (entry↔SL) zones for pending entries, with the
+        // USD P&L if the level is reached. Drag-aware via the same overrides as the lines.
+        const zonesOut: ZonePos[] = [];
+        for (const o of visibleOrders) {
+          if (o.bracketRole || o.price == null) continue;
+          const entryP = ov.get(o.id) ?? o.price;
+          const ey = series.priceToCoordinate(entryP);
+          if (ey == null) continue;
+          const dir = o.side === "buy" ? 1 : -1;
+          const band = (lineKey: string, base: number | null | undefined) => {
+            if (base == null || base <= 0) return;
+            const p = ov.get(lineKey) ?? base;
+            const ly = series.priceToCoordinate(p);
+            if (ly == null) return;
+            const pnl = (p - entryP) * dir * o.quantity * multiplier;
+            zonesOut.push({ key: lineKey, top: Math.min(ey, ly as number), height: Math.abs((ly as number) - ey), lineY: ly as number, pnl, right });
+          };
+          band(`${o.id}:TP`, o.tpPrice);
+          band(`${o.id}:SL`, o.slPrice);
+        }
+        const key =
+          out.map((t) => `${t.lineKey}:${Math.round(t.y)}:${t.price}`).join("|") +
+          "#" +
+          zonesOut.map((z) => `${z.key}:${Math.round(z.top)}:${Math.round(z.height)}:${Math.round(z.pnl)}`).join("|");
         if (key !== lastTagsRef.current) {
           lastTagsRef.current = key;
-          setOrderTags(tags);
+          setLevels(out);
+          setZones(zonesOut);
         }
       }
       raf = requestAnimationFrame(update);
@@ -491,6 +699,16 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const res = await placeOrder({ symbol, side, type, quantity: qty, price, stopLoss, takeProfit });
     setPlaced(res.ok ? `✓ ${label}` : `✗ ${res.error ?? "Order rejected"}`);
     setTimeout(() => setPlaced(null), 3000);
+    // A bracket's SL/TP can land outside a tightly-zoomed vertical range. After the
+    // order (and its lines) land, re-fit the price scale ONCE — the autoscale provider
+    // now includes the order levels — then release it so vertical panning still works.
+    if (res.ok && (stopLoss != null || takeProfit != null)) {
+      window.setTimeout(() => {
+        const ps = chartRef.current?.priceScale("right");
+        ps?.applyOptions({ autoScale: true });
+        window.setTimeout(() => ps?.applyOptions({ autoScale: false }), 80);
+      }, 250);
+    }
   }
 
   // Zoom by scaling the visible logical range around its center.
@@ -504,11 +722,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
     ts.setVisibleLogicalRange({ from: center - half, to: center + half });
   };
   const resetZoom = () => {
-    // Re-fit both axes, then release the price auto-fit again so vertical pan stays available.
-    const chart = chartRef.current;
-    chart?.timeScale().fitContent();
-    chart?.priceScale("right").applyOptions({ autoScale: true });
-    window.setTimeout(() => chartRef.current?.priceScale("right").applyOptions({ autoScale: false }), 60);
+    // Back to the default recent window (not all ~7 days), then release price auto-fit.
+    showDefaultView(barCountRef.current);
   };
 
   // Flip the popup to the left when clicking near the right edge.
@@ -529,6 +744,85 @@ export function CandleChart({ symbol }: { symbol: string }) {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }
+
+  // Move a working order's lightweight-charts line live during a drag.
+  const applyLine = (lineKey: string, price: number) => {
+    orderLinesRef.current.get(lineKey)?.applyOptions({ price });
+  };
+  const snap = (p: number) => Math.round(p / tickSize) * tickSize;
+
+  // Drag a level (entry / SL / TP) directly on the chart. No confirmation — the drop
+  // persists via modifyOrder. Entry, SL and TP each drag INDEPENDENTLY (moving the entry
+  // does not drag the bracket). Filled-position exit legs drag via their own price.
+  // Mirrors the startTicketDrag closure pattern.
+  function startLevelDrag(e: React.MouseEvent, lvl: LevelPos) {
+    e.preventDefault();
+    e.stopPropagation();
+    const series = candleRef.current;
+    const container = containerRef.current;
+    const o = visibleOrders.find((x) => x.id === lvl.orderId);
+    if (!series || !container || !o || o.price == null) return;
+    const ov = dragOverrideRef.current;
+
+    const onMove = (ev: MouseEvent) => {
+      const raw = series.coordinateToPrice(ev.clientY - container.getBoundingClientRect().top);
+      if (raw == null) return;
+      const price = snap(raw as number);
+      // Each level moves independently — dragging the entry does NOT drag SL/TP with
+      // it (they stay at their absolute prices, as in TradingView).
+      ov.set(lvl.lineKey, price);
+      applyLine(lvl.lineKey, price);
+    };
+
+    const onUp = async () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      const moved = ov.get(lvl.lineKey);
+      if (moved == null) return; // never actually dragged
+      const changes: { price?: number; stopLoss?: number; takeProfit?: number } =
+        lvl.role === "SL" ? { stopLoss: moved } : lvl.role === "TP" ? { takeProfit: moved } : { price: moved };
+      // Keep the override set through the async save so the line/pill/zone stay at the
+      // dragged price (no snap-back). The rAF loop releases it once the persisted price
+      // catches up. On rejection, drop it now so the level returns to where it was.
+      const res = await modifyOrder(o.id, changes);
+      if (!res.ok) {
+        ov.delete(lvl.lineKey);
+        flash(`✗ ${res.error ?? "Modify failed"}`);
+        const cur = useOrdersStore.getState().orders.find((x) => x.id === o.id);
+        if (cur?.price != null) applyLine(o.id, cur.price);
+        if (cur?.slPrice != null) applyLine(`${o.id}:SL`, cur.slPrice);
+        if (cur?.tpPrice != null) applyLine(`${o.id}:TP`, cur.tpPrice);
+      }
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  // Attach a bracket leg to a pending order at a default offset (20 ticks), oriented
+  // to the side (stop adverse, target favourable). The trader then drags to fine-tune.
+  async function addBracket(orderId: string, which: "SL" | "TP") {
+    const o = visibleOrders.find((x) => x.id === orderId);
+    if (!o || o.price == null) return;
+    const dir = o.side === "buy" ? 1 : -1;
+    const offset = 20 * tickSize;
+    const price = which === "SL" ? round(o.price - dir * offset) : round(o.price + dir * offset);
+    const res = await modifyOrder(orderId, which === "SL" ? { stopLoss: price } : { takeProfit: price });
+    if (!res.ok) flash(`✗ ${res.error ?? "Could not add " + which}`);
+  }
+
+  // Remove a level: a pending bracket clears that field; an exit leg cancels the order.
+  async function removeLevel(lvl: LevelPos) {
+    const res = lvl.isLeg
+      ? await cancelOrder(lvl.orderId)
+      : await modifyOrder(lvl.orderId, lvl.role === "SL" ? { stopLoss: null } : { takeProfit: null });
+    if (!res.ok) flash(`✗ ${res.error ?? "Remove failed"}`);
+  }
+
+  const flash = (msg: string) => {
+    setPlaced(msg);
+    setTimeout(() => setPlaced(null), 3000);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -557,8 +851,12 @@ export function CandleChart({ symbol }: { symbol: string }) {
 
       <div className="relative flex-1">
         {loading && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center text-xs text-muted">
-            Loading chart…
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface-2/50 backdrop-blur-sm">
+            <span
+              className="h-6 w-6 animate-spin rounded-full border-2 border-muted-2/30 border-t-primary"
+              aria-hidden
+            />
+            <span className="text-xs font-medium text-muted">Loading chart…</span>
           </div>
         )}
 
@@ -575,35 +873,81 @@ export function CandleChart({ symbol }: { symbol: string }) {
 
         <div ref={containerRef} className="h-full w-full" />
 
-        {/* Working-order tags at each order's price line (right side, near the axis).
-            The ✕ HIDES the label only — it does NOT cancel the order. */}
-        <div className="pointer-events-none absolute inset-0 overflow-hidden">
-          {orderTags.map((t) => (
+        {/* Profit (entry↔TP, green) / risk (entry↔SL, red) zones behind a pending order.
+            The colored band is semi-transparent (candles show through); the USD P&L badge
+            sits ON the TP/SL line (left side, clear of the role/price pill on the right). */}
+        <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+          {zones.map((z) => (
+            <div key={z.key}>
               <div
-                key={t.id}
-                style={{ top: t.y, right: t.right }}
+                style={{ top: z.top, height: z.height }}
+                className={cn("absolute left-0 right-0", z.pnl >= 0 ? "bg-long/10" : "bg-short/10")}
+              />
+              <div
+                style={{ top: z.lineY, left: 4 }}
                 className={cn(
-                  "pointer-events-auto absolute z-20 flex -translate-y-1/2 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
-                  t.side === "buy" ? "bg-long/90 text-black" : "bg-short/90 text-white",
+                  "nums absolute -translate-y-1/2 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                  z.pnl >= 0 ? "bg-long/85 text-black" : "bg-short/85 text-white",
                 )}
               >
+                {z.pnl >= 0 ? "+" : "−"}
+                {Math.abs(z.pnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Draggable order levels: entry + bracket SL/TP. Drag a pill up/down to move
+            the level — no confirmation, it persists on drop. lightweight-charts draws
+            the lines; these pills are the handles + labels + add/remove controls. */}
+        <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
+          {levels.map((t) => {
+            const isEntry = t.role === "entry";
+            const o = visibleOrders.find((x) => x.id === t.orderId);
+            const hasSl = o?.slPrice != null && o.slPrice > 0;
+            const hasTp = o?.tpPrice != null && o.tpPrice > 0;
+            // Entry = neutral blue (distinct from green TP / red SL / green price marker);
+            // SL = red, TP = green. Side is shown in the BUY/SELL label, not the colour.
+            const tone = isEntry
+              ? "bg-[#7c9cff] text-black"
+              : t.role === "SL" ? "bg-short/90 text-white" : "bg-long/90 text-black";
+            const label = isEntry ? `${t.qty} ${t.side === "buy" ? "BUY" : "SELL"} ${t.type.toUpperCase()}` : t.role;
+            const stop = (e: React.MouseEvent) => e.stopPropagation();
+            return (
+              <div
+                key={t.lineKey}
+                style={{ top: t.y, right: t.right }}
+                onMouseDown={(e) => startLevelDrag(e, t)}
+                title="Drag to move"
+                className={cn(
+                  "pointer-events-auto absolute z-20 flex -translate-y-1/2 cursor-ns-resize select-none items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                  tone,
+                )}
+              >
+                <span>{label}</span>
+                <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
+                {isEntry && !hasSl && (
+                  <button type="button" title="Add stop loss" onMouseDown={stop} onClick={() => addBracket(t.orderId, "SL")} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                    +SL
+                  </button>
+                )}
+                {isEntry && !hasTp && (
+                  <button type="button" title="Add take profit" onMouseDown={stop} onClick={() => addBracket(t.orderId, "TP")} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                    +TP
+                  </button>
+                )}
                 <button
                   type="button"
-                  title="Hide this label"
-                  onClick={() =>
-                    setHiddenTagIds((prev) => {
-                      const next = new Set(prev).add(t.id);
-                      saveHiddenLabels(next);
-                      return next;
-                    })
-                  }
+                  title={isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
+                  onMouseDown={stop}
+                  onClick={() => (isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
                   className="text-[11px] leading-none opacity-80 hover:opacity-100"
                 >
                   ✕
                 </button>
-                {t.label}
               </div>
-            ))}
+            );
+          })}
         </div>
 
         {ticket && (

@@ -92,6 +92,8 @@ export interface Order {
   updatedAt: number;
   reason?: string; // populated on reject/cancel
   bracketRole?: "SL" | "TP"; // set when this order is a bracket exit leg (stop-loss / take-profit)
+  slPrice?: number | null; // bracket stop-loss on a working entry, shown until it fills (then a real SL leg exists)
+  tpPrice?: number | null; // bracket take-profit on a working entry, shown until it fills (then a real TP leg exists)
 }
 
 export interface Position {
