@@ -63,12 +63,14 @@ interface ChartTicket {
   price: number;
 }
 
-/** A draggable order level (entry, or a bracket SL/TP) positioned on the chart. */
+/** A level positioned on the chart: a working order (draggable) or the open position. */
 interface LevelPos {
   lineKey: string; // key into orderLinesRef + the drag-override map
-  orderId: string;
+  orderId: string; // order id, or the symbol for a position
   role: "entry" | "SL" | "TP";
   isLeg: boolean; // true = a live exit leg on a filled position; false = pending entry / its bracket
+  kind: "order" | "position"; // a working order vs the filled position's average-entry line
+  draggable: boolean; // a filled position's entry line is shown but cannot be moved
   y: number; // pixel Y of the line
   price: number;
   side: Side;
@@ -140,7 +142,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const placeOrder = useOrdersStore((s) => s.placeOrder);
   const modifyOrder = useOrdersStore((s) => s.modifyOrder);
   const cancelOrder = useOrdersStore((s) => s.cancelOrder);
+  const closePosition = useOrdersStore((s) => s.closePosition);
   const allOrders = useOrdersStore((s) => s.orders);
+  const allPositions = useOrdersStore((s) => s.positions);
   const theme = useThemeStore((s) => s.theme);
 
   // Resting (working) limit/stop orders for this symbol — drawn on the chart as
@@ -148,9 +152,16 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const visibleOrders = allOrders.filter(
     (o) => o.symbol === symbol && (o.status === "open" || o.status === "partial") && o.price != null,
   );
-  const visibleKey = visibleOrders
-    .map((o) => `${o.id}:${o.price}:${o.side}:${o.type}:${o.bracketRole ?? ""}:${o.slPrice ?? ""}:${o.tpPrice ?? ""}`)
-    .join("|");
+  // The open position for this symbol — drawn as a NON-draggable average-entry line so
+  // the trader still sees where they got in once a working order fills (the order itself
+  // leaves the book). Its SL/TP exit legs remain draggable (they're separate orders).
+  const position = allPositions.find((p) => p.symbol === symbol && p.quantity > 0) ?? null;
+  const visibleKey =
+    visibleOrders
+      .map((o) => `${o.id}:${o.price}:${o.side}:${o.type}:${o.bracketRole ?? ""}:${o.slPrice ?? ""}:${o.tpPrice ?? ""}`)
+      .join("|") +
+    "#" +
+    (position ? `${position.side}:${position.avgPrice}:${position.quantity}` : "");
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
   const tickSize = inst?.tickSize ?? 0.01;
@@ -570,17 +581,30 @@ export function CandleChart({ symbol }: { symbol: string }) {
         }
       }
     }
-    // Remove lines for orders that closed OR were hidden (no line / no axis label).
+    // The filled position's average-entry line — solid blue (vs dashed for a working
+    // order) so it reads as "you're in", and non-draggable.
+    const posKey = `pos:${symbol}`;
+    const prevPos = lines.get(posKey);
+    if (prevPos) series.removePriceLine(prevPos);
+    if (position) {
+      seen.add(posKey);
+      lines.set(
+        posKey,
+        series.createPriceLine({ price: position.avgPrice, color: "#7c9cff", lineWidth: 2, lineStyle: LineStyle.Solid, axisLabelVisible: false }),
+      );
+    }
+    // Remove lines for orders/positions that closed (no line / no axis label).
     for (const [id, line] of lines) {
       if (!seen.has(id)) {
         series.removePriceLine(line);
         lines.delete(id);
       }
     }
-    // Feed the working-order levels (entry + bracket SL/TP) into the autoscale provider.
-    orderLevelsRef.current = visibleOrders.flatMap((o) =>
-      [o.price, o.slPrice, o.tpPrice].filter((v): v is number => v != null && v > 0),
-    );
+    // Feed the working-order + position levels into the autoscale provider.
+    orderLevelsRef.current = [
+      ...visibleOrders.flatMap((o) => [o.price, o.slPrice, o.tpPrice]),
+      position?.avgPrice,
+    ].filter((v): v is number => v != null && v > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey]);
 
@@ -606,7 +630,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
           const price = ov.get(lineKey) ?? base;
           const coord = series.priceToCoordinate(price);
           if (coord == null) return;
-          out.push({ lineKey, orderId, role, isLeg, y: coord as number, price, side: o.side, qty: o.quantity, type: o.type, right });
+          out.push({ lineKey, orderId, role, isLeg, kind: "order", draggable: true, y: coord as number, price, side: o.side, qty: o.quantity, type: o.type, right });
         };
         // Drop overrides whose order/leg is gone (filled/cancelled) so they can't linger.
         const liveKeys = new Set<string>();
@@ -628,6 +652,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
             if (o.slPrice != null && o.slPrice > 0) push(`${o.id}:SL`, o.id, "SL", false, o.slPrice, o);
             if (o.tpPrice != null && o.tpPrice > 0) push(`${o.id}:TP`, o.id, "TP", false, o.tpPrice, o);
           }
+        }
+        // The open position's average-entry line — shown but NOT draggable.
+        if (position) {
+          const py = series.priceToCoordinate(position.avgPrice);
+          if (py != null)
+            out.push({
+              lineKey: `pos:${symbol}`, orderId: symbol, role: "entry", isLeg: false, kind: "position", draggable: false,
+              y: py as number, price: position.avgPrice, side: position.side, qty: position.quantity, type: "market", right,
+            });
         }
         // Shaded profit (entry↔TP) / risk (entry↔SL) zones for pending entries, with the
         // USD P&L if the level is reached. Drag-aware via the same overrides as the lines.
@@ -779,8 +812,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
       window.removeEventListener("mouseup", onUp);
       const moved = ov.get(lvl.lineKey);
       if (moved == null) return; // never actually dragged
-      const changes: { price?: number; stopLoss?: number; takeProfit?: number } =
-        lvl.role === "SL" ? { stopLoss: moved } : lvl.role === "TP" ? { takeProfit: moved } : { price: moved };
+      // An exit leg (filled-position SL/TP) is its OWN order — move it via its price.
+      // Only a pending entry's attached bracket uses the stopLoss/takeProfit fields.
+      const changes: { price?: number; stopLoss?: number; takeProfit?: number } = lvl.isLeg
+        ? { price: moved }
+        : lvl.role === "SL"
+          ? { stopLoss: moved }
+          : lvl.role === "TP"
+            ? { takeProfit: moved }
+            : { price: moved };
       // Keep the override set through the async save so the line/pill/zone stay at the
       // dragged price (no snap-back). The rAF loop releases it once the persisted price
       // catches up. On rejection, drop it now so the level returns to where it was.
@@ -902,45 +942,49 @@ export function CandleChart({ symbol }: { symbol: string }) {
             the lines; these pills are the handles + labels + add/remove controls. */}
         <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
           {levels.map((t) => {
+            const isPosition = t.kind === "position";
             const isEntry = t.role === "entry";
             const o = visibleOrders.find((x) => x.id === t.orderId);
             const hasSl = o?.slPrice != null && o.slPrice > 0;
             const hasTp = o?.tpPrice != null && o.tpPrice > 0;
-            // Entry = neutral blue (distinct from green TP / red SL / green price marker);
-            // SL = red, TP = green. Side is shown in the BUY/SELL label, not the colour.
-            const tone = isEntry
-              ? "bg-[#7c9cff] text-black"
-              : t.role === "SL" ? "bg-short/90 text-white" : "bg-long/90 text-black";
-            const label = isEntry ? `${t.qty} ${t.side === "buy" ? "BUY" : "SELL"} ${t.type.toUpperCase()}` : t.role;
+            // Position entry + working entry = neutral blue (distinct from green TP / red SL
+            // / green price marker); SL = red, TP = green.
+            const tone = isEntry ? "bg-[#7c9cff] text-black" : t.role === "SL" ? "bg-short/90 text-white" : "bg-long/90 text-black";
+            const label = isPosition
+              ? `${t.qty} ${t.side === "buy" ? "LONG" : "SHORT"}`
+              : isEntry
+                ? `${t.qty} ${t.side === "buy" ? "BUY" : "SELL"} ${t.type.toUpperCase()}`
+                : t.role;
             const stop = (e: React.MouseEvent) => e.stopPropagation();
             return (
               <div
                 key={t.lineKey}
                 style={{ top: t.y, right: t.right }}
-                onMouseDown={(e) => startLevelDrag(e, t)}
-                title="Drag to move"
+                onMouseDown={t.draggable ? (e) => startLevelDrag(e, t) : undefined}
+                title={t.draggable ? "Drag to move" : isPosition ? "Open position (entry locked)" : undefined}
                 className={cn(
-                  "pointer-events-auto absolute z-20 flex -translate-y-1/2 cursor-ns-resize select-none items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                  "pointer-events-auto absolute z-20 flex -translate-y-1/2 select-none items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                  t.draggable ? "cursor-ns-resize" : "cursor-default",
                   tone,
                 )}
               >
                 <span>{label}</span>
                 <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
-                {isEntry && !hasSl && (
+                {!isPosition && isEntry && !hasSl && (
                   <button type="button" title="Add stop loss" onMouseDown={stop} onClick={() => addBracket(t.orderId, "SL")} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
                     +SL
                   </button>
                 )}
-                {isEntry && !hasTp && (
+                {!isPosition && isEntry && !hasTp && (
                   <button type="button" title="Add take profit" onMouseDown={stop} onClick={() => addBracket(t.orderId, "TP")} className="rounded bg-black/20 px-1 leading-none hover:bg-black/35">
                     +TP
                   </button>
                 )}
                 <button
                   type="button"
-                  title={isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
+                  title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
                   onMouseDown={stop}
-                  onClick={() => (isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
+                  onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
                   className="text-[11px] leading-none opacity-80 hover:opacity-100"
                 >
                   ✕
