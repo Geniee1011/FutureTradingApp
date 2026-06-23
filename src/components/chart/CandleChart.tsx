@@ -682,6 +682,24 @@ export function CandleChart({ symbol }: { symbol: string }) {
           band(`${o.id}:TP`, o.tpPrice);
           band(`${o.id}:SL`, o.slPrice);
         }
+        // In a trade: zones from the position's average entry to each SL/TP exit leg, so
+        // the estimated profit/loss stays visible after the order fills. Drag-aware (the
+        // leg price comes from its override while dragging).
+        if (position) {
+          const entryP = position.avgPrice;
+          const ey = series.priceToCoordinate(entryP);
+          if (ey != null) {
+            const dir = position.side === "buy" ? 1 : -1;
+            for (const leg of visibleOrders) {
+              if (!leg.bracketRole || leg.price == null) continue;
+              const lp = ov.get(leg.id) ?? leg.price;
+              const ly = series.priceToCoordinate(lp);
+              if (ly == null) continue;
+              const pnl = (lp - entryP) * dir * position.quantity * multiplier;
+              zonesOut.push({ key: `poszone:${leg.id}`, top: Math.min(ey, ly as number), height: Math.abs((ly as number) - ey), lineY: ly as number, pnl, right });
+            }
+          }
+        }
         const key =
           out.map((t) => `${t.lineKey}:${Math.round(t.y)}:${t.price}`).join("|") +
           "#" +
