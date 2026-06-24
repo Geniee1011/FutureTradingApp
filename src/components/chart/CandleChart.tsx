@@ -51,13 +51,6 @@ const HISTORY_COUNT: Record<number, number> = {
 };
 const DEFAULT_HISTORY_COUNT = 500;
 
-// Gaps up to this span are forward-filled with flat carry-forward bars so the series
-// stays contiguous — lightweight-charts leaves empty space for missing intervals, which
-// is what produced the "gap" between Fri-close→Sun-open and brief feed interruptions.
-// 4h covers feed drops + the daily maintenance halt; larger gaps (weekends) are left
-// rather than inserting thousands of flat bars.
-const MAX_FILL_GAP_SEC = 4 * 3600;
-
 // Bars shown by default after a load / reset. The full history above stays scrollable
 // to the left — this just keeps the opening view a readable recent window instead of
 // squashing all ~7 days into hairline candles. 480 ≈ 8 hours at 1m.
@@ -85,6 +78,11 @@ interface LevelPos {
   type: OrderType;
   right: number; // px from the right edge (clears the price axis)
 }
+
+/** A dropped-but-unconfirmed drag awaiting the ✓/✗ inline confirm. */
+type PendingConfirm =
+  | { kind: "move"; lineKey: string; orderId: string; role: "entry" | "SL" | "TP"; isLeg: boolean; newPrice: number }
+  | { kind: "add"; which: "SL" | "TP"; isPos: boolean; orderId: string; newPrice: number; entryPrice: number; side: Side; qty: number };
 
 /** A shaded profit (entry↔TP) or risk (entry↔SL) zone behind a pending order. */
 interface ZonePos {
@@ -126,6 +124,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
   // Active "drag to add SL/TP" gesture — drives a live preview zone (fill + USD P&L)
   // between the entry and the dragged level while +SL/+TP is being placed.
   const addDragRef = useRef<{ entryPrice: number; price: number; side: Side; qty: number } | null>(null);
+  // A drag that's been dropped but is awaiting the trader's ✓/✗ confirm before it persists.
+  const pendingConfirmRef = useRef<PendingConfirm | null>(null); // read by the rAF loop
+  const addPreviewRef = useRef<IPriceLine | null>(null); // the +SL/+TP preview line, kept until confirm/cancel
   const lastTagsRef = useRef<string>("");
   const loadCleanupRef = useRef<(() => void) | null>(null);
   const [resolution, setResolution] = useState(60);
@@ -138,6 +139,11 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [placed, setPlaced] = useState<string | null>(null);
   const [levels, setLevels] = useState<LevelPos[]>([]);
   const [zones, setZones] = useState<ZonePos[]>([]);
+  const [pendingConfirm, setPendingConfirmState] = useState<PendingConfirm | null>(null);
+  const setPending = (pc: PendingConfirm | null) => {
+    pendingConfirmRef.current = pc; // keep the rAF-readable ref in sync with state
+    setPendingConfirmState(pc);
+  };
   // Order labels dismissed from the chart (hidden ONLY — the orders stay active).
   // Seeded from localStorage so dismissals survive a page refresh.
 
@@ -322,26 +328,12 @@ export function CandleChart({ symbol }: { symbol: string }) {
 
       const render = (raw: { time: number; open: number; high: number; low: number; close: number; volume: number }[]) => {
         if (!candleRef.current || !volumeRef.current) return;
-        // Drop any whitespace/invalid bars (non-finite or non-positive OHLC).
-        const valid = raw.filter(
+        // Drop any whitespace/invalid bars (non-finite or non-positive OHLC). Gaps in the
+        // data (feed interruptions, weekends) are left as-is — lightweight-charts shows the
+        // empty stretch rather than fabricating flat bars across it.
+        const candles = raw.filter(
           (c) => Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close) && c.low > 0,
         );
-        // Forward-fill short gaps so the series is contiguous (lightweight-charts spaces
-        // bars by time and shows empty space for any missing interval). Flat, zero-volume
-        // carry-forward bars; gaps beyond MAX_FILL_GAP_SEC (weekends) are left as-is.
-        const candles: typeof valid = [];
-        for (let i = 0; i < valid.length; i++) {
-          if (i > 0) {
-            const prev = valid[i - 1]!;
-            const span = valid[i]!.time - prev.time;
-            if (span > resolution && span <= MAX_FILL_GAP_SEC) {
-              for (let t = prev.time + resolution; t < valid[i]!.time; t += resolution) {
-                candles.push({ time: t, open: prev.close, high: prev.close, low: prev.close, close: prev.close, volume: 0 });
-              }
-            }
-          }
-          candles.push(valid[i]!);
-        }
         const candleData: CandlestickData<UTCTimestamp>[] = candles.map((c) => ({
           time: c.time as UTCTimestamp,
           open: c.open,
@@ -483,17 +475,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
     let next: CandlestickData<UTCTimestamp>;
     let nextVol: HistogramData<UTCTimestamp>;
     if (!last || bucket > (last.time as number)) {
-      // Forward-fill skipped intervals (a brief feed drop) with flat carry-forward bars
-      // so no empty space opens at the live edge. Capped — a large gap is left to history.
-      if (last) {
-        const lastT = last.time as number;
-        const lastClose = last.close;
-        if (bucket > lastT + resolution && bucket - lastT <= MAX_FILL_GAP_SEC) {
-          for (let t = lastT + resolution; t < bucket; t += resolution) {
-            candleRef.current.update({ time: t as UTCTimestamp, open: lastClose, high: lastClose, low: lastClose, close: lastClose });
-          }
-        }
-      }
       next = { time: bucket, open: price, high: price, low: price, close: price };
       nextVol = { time: bucket, value: size, color: upColor }; // new bar opens flat → up tone
     } else {
@@ -705,6 +686,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
               y: py as number, price: position.avgPrice, side: position.side, qty: position.quantity, type: "market", right,
             });
         }
+        // Synthetic level for a pending "add" confirm — gives the new SL/TP a pill so it can
+        // carry the ✓/✗ (the preview line + zone are kept separately until confirm/cancel).
+        const pcAdd = pendingConfirmRef.current;
+        if (pcAdd?.kind === "add") {
+          out.push({
+            lineKey: "add-confirm", orderId: pcAdd.orderId, role: pcAdd.which, isLeg: false, kind: "order", draggable: false,
+            y: yAt(pcAdd.newPrice, pcAdd.entryPrice), price: pcAdd.newPrice, side: pcAdd.side, qty: pcAdd.qty, type: "market", right,
+          });
+        }
         // Shaded profit (entry↔TP) / risk (entry↔SL) zones for pending entries, with the
         // USD P&L if the level is reached. Drag-aware via the same overrides as the lines.
         const zonesOut: ZonePos[] = [];
@@ -859,6 +849,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   function startLevelDrag(e: React.MouseEvent, lvl: LevelPos) {
     e.preventDefault();
     e.stopPropagation();
+    if (pendingConfirmRef.current) cancelPending(); // discard any unconfirmed drag first
     const series = candleRef.current;
     const container = containerRef.current;
     const o = visibleOrders.find((x) => x.id === lvl.orderId);
@@ -875,32 +866,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
       applyLine(lvl.lineKey, price);
     };
 
-    const onUp = async () => {
+    const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
       const moved = ov.get(lvl.lineKey);
       if (moved == null) return; // never actually dragged
-      // An exit leg (filled-position SL/TP) is its OWN order — move it via its price.
-      // Only a pending entry's attached bracket uses the stopLoss/takeProfit fields.
-      const changes: { price?: number; stopLoss?: number; takeProfit?: number } = lvl.isLeg
-        ? { price: moved }
-        : lvl.role === "SL"
-          ? { stopLoss: moved }
-          : lvl.role === "TP"
-            ? { takeProfit: moved }
-            : { price: moved };
-      // Keep the override set through the async save so the line/pill/zone stay at the
-      // dragged price (no snap-back). The rAF loop releases it once the persisted price
-      // catches up. On rejection, drop it now so the level returns to where it was.
-      const res = await modifyOrder(o.id, changes);
-      if (!res.ok) {
-        ov.delete(lvl.lineKey);
-        flash(`✗ ${res.error ?? "Modify failed"}`);
-        const cur = useOrdersStore.getState().orders.find((x) => x.id === o.id);
-        if (cur?.price != null) applyLine(o.id, cur.price);
-        if (cur?.slPrice != null) applyLine(`${o.id}:SL`, cur.slPrice);
-        if (cur?.tpPrice != null) applyLine(`${o.id}:TP`, cur.tpPrice);
-      }
+      // Don't persist yet — keep the override (line stays at the dragged price) and ask
+      // the trader to ✓/✗ confirm. Accept commits; cancel snaps it back (see confirm/cancel).
+      setPending({ kind: "move", lineKey: lvl.lineKey, orderId: o.id, role: lvl.role, isLeg: lvl.isLeg, newPrice: moved });
     };
 
     window.addEventListener("mousemove", onMove);
@@ -936,6 +909,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   function startAddBracketDrag(e: React.MouseEvent, t: LevelPos, which: "SL" | "TP") {
     e.preventDefault();
     e.stopPropagation();
+    if (pendingConfirmRef.current) cancelPending(); // discard any unconfirmed drag first
     const series = candleRef.current;
     const container = containerRef.current;
     const isPos = t.kind === "position";
@@ -964,16 +938,67 @@ export function CandleChart({ symbol }: { symbol: string }) {
       preview.applyOptions({ price: dragged });
       if (addDragRef.current) addDragRef.current.price = dragged;
     };
-    const onUp = async () => {
+    const onUp = () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
-      if (isPos) await addPositionBracket(which, dragged);
-      else await addBracket(t.orderId, which, dragged);
-      series.removePriceLine(preview); // real line + zone are drawn by the refresh
-      addDragRef.current = null;
+      // Don't add yet — keep the preview line + zone and ask for ✓/✗ confirm. Accept
+      // creates the bracket; cancel discards it (so cancelling a brand-new SL = no SL).
+      const finalPx = dragged ?? defaultPx;
+      if (addDragRef.current) addDragRef.current.price = finalPx;
+      addPreviewRef.current = preview; // kept until confirm/cancel removes it
+      setPending({ kind: "add", which, isPos, orderId: t.orderId, newPrice: finalPx, entryPrice, side, qty });
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+  }
+
+  // ✓ confirm: persist the pending drag (move → modify; add → create the bracket).
+  async function confirmPending() {
+    const pc = pendingConfirmRef.current;
+    if (!pc) return;
+    if (pc.kind === "move") {
+      const changes: { price?: number; stopLoss?: number; takeProfit?: number } = pc.isLeg
+        ? { price: pc.newPrice }
+        : pc.role === "SL"
+          ? { stopLoss: pc.newPrice }
+          : pc.role === "TP"
+            ? { takeProfit: pc.newPrice }
+            : { price: pc.newPrice };
+      setPending(null); // the override stays until the rAF settles it against the saved price
+      const res = await modifyOrder(pc.orderId, changes);
+      if (!res.ok) {
+        flash(`✗ ${res.error ?? "Modify failed"}`);
+        revertMoveLine(pc);
+      }
+    } else {
+      if (addPreviewRef.current) candleRef.current?.removePriceLine(addPreviewRef.current);
+      addPreviewRef.current = null;
+      addDragRef.current = null;
+      setPending(null);
+      if (pc.isPos) await addPositionBracket(pc.which, pc.newPrice);
+      else await addBracket(pc.orderId, pc.which, pc.newPrice);
+    }
+  }
+
+  // ✗ cancel: discard the pending drag and snap the line back to where it was.
+  function cancelPending() {
+    const pc = pendingConfirmRef.current;
+    if (!pc) return;
+    if (pc.kind === "move") revertMoveLine(pc);
+    else {
+      if (addPreviewRef.current) candleRef.current?.removePriceLine(addPreviewRef.current);
+      addPreviewRef.current = null;
+      addDragRef.current = null; // drop the preview zone
+    }
+    setPending(null);
+  }
+
+  // Restore a moved line to its persisted price (cancel, or a rejected confirm).
+  function revertMoveLine(pc: Extract<PendingConfirm, { kind: "move" }>) {
+    dragOverrideRef.current.delete(pc.lineKey);
+    const o = useOrdersStore.getState().orders.find((x) => x.id === pc.orderId);
+    const stored = pc.isLeg || pc.role === "entry" ? o?.price : pc.role === "SL" ? o?.slPrice : o?.tpPrice;
+    if (stored != null) applyLine(pc.lineKey, stored);
   }
 
   // Remove a level: a pending bracket clears that field; an exit leg cancels the order.
@@ -1082,39 +1107,73 @@ export function CandleChart({ symbol }: { symbol: string }) {
                 ? `${t.qty} ${t.side === "buy" ? "BUY" : "SELL"} ${t.type.toUpperCase()}`
                 : t.role;
             const stop = (e: React.MouseEvent) => e.stopPropagation();
+            const isPending =
+              pendingConfirm != null &&
+              ((pendingConfirm.kind === "move" && pendingConfirm.lineKey === t.lineKey) ||
+                (pendingConfirm.kind === "add" && t.lineKey === "add-confirm"));
+            const canDrag = t.draggable && !isPending;
+            // Live unrealised P&L for an open position (updates every quote tick — the
+            // component re-renders on the quote selector). The entry price moves to the title.
+            const posPnl = isPosition ? (market - t.price) * (t.side === "buy" ? 1 : -1) * t.qty * multiplier : 0;
             return (
               <div
                 key={t.lineKey}
                 style={{ top: t.y, right: t.right }}
-                onMouseDown={t.draggable ? (e) => startLevelDrag(e, t) : undefined}
-                title={t.draggable ? "Drag to move" : isPosition ? "Open position (entry locked)" : undefined}
+                onMouseDown={canDrag ? (e) => startLevelDrag(e, t) : undefined}
+                title={canDrag ? "Drag to move" : isPosition ? `Entry ${formatPrice(t.price, precision)}` : undefined}
                 className={cn(
                   "pointer-events-auto absolute z-20 flex -translate-y-1/2 select-none items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
-                  t.draggable ? "cursor-ns-resize" : "cursor-default",
+                  canDrag ? "cursor-ns-resize" : "cursor-default",
+                  isPending && "ring-2 ring-white/70",
                   tone,
                 )}
               >
                 <span>{label}</span>
-                <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
-                {isEntry && !hasSl && (
-                  <button type="button" title="Drag to add stop loss" onMouseDown={(e) => startAddBracketDrag(e, t, "SL")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
-                    +SL
-                  </button>
+                {isPosition ? (
+                  <span
+                    className={cn(
+                      "nums rounded px-1 font-semibold",
+                      posPnl >= 0 ? "bg-long/90 text-black" : "bg-short/90 text-white",
+                    )}
+                  >
+                    {posPnl >= 0 ? "+" : "−"}
+                    {Math.abs(posPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                  </span>
+                ) : (
+                  <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
                 )}
-                {isEntry && !hasTp && (
-                  <button type="button" title="Drag to add take profit" onMouseDown={(e) => startAddBracketDrag(e, t, "TP")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
-                    +TP
-                  </button>
+                {isPending ? (
+                  <>
+                    <button type="button" title="Confirm" onMouseDown={stop} onClick={confirmPending} className="inline-block rounded bg-black/25 px-1 leading-none transition-transform duration-150 hover:scale-125 hover:bg-black/45">
+                      ✓
+                    </button>
+                    <button type="button" title="Cancel" onMouseDown={stop} onClick={cancelPending} className="inline-block rounded bg-black/25 px-1 leading-none transition-transform duration-150 hover:scale-125 hover:bg-black/45">
+                      ✕
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {isEntry && !hasSl && (
+                      <button type="button" title="Drag to add stop loss" onMouseDown={(e) => startAddBracketDrag(e, t, "SL")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                        +SL
+                      </button>
+                    )}
+                    {isEntry && !hasTp && (
+                      <button type="button" title="Drag to add take profit" onMouseDown={(e) => startAddBracketDrag(e, t, "TP")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
+                        +TP
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
+                      onMouseDown={stop}
+                      onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
+                      className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
+                    >
+                      ✕
+                    </button>
+                  </>
                 )}
-                <button
-                  type="button"
-                  title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
-                  onMouseDown={stop}
-                  onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
-                  className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
-                >
-                  ✕
-                </button>
               </div>
             );
           })}
