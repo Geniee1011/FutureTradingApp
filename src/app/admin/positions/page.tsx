@@ -73,14 +73,15 @@ export default function AdminPositionsPage() {
     return off;
   }, [scheduleReload]);
 
-  // Safety net: a slow silent poll while the tab is visible covers any missed push and
-  // keeps unrealized P&L fresh (P&L drifts each tick and isn't pushed structurally).
-  // Also refreshes immediately on tab refocus.
+  // Keep P&L synced: a short silent poll while the tab is visible marks every open
+  // position to market (unrealized + booked P&L drift each tick and aren't pushed
+  // structurally). Structural changes still arrive instantly via the admin_update push
+  // above; this just keeps the live P&L numbers moving. Also refreshes on tab refocus.
   useEffect(() => {
     const tick = () => {
       if (document.visibilityState === "visible") void load({ silent: true });
     };
-    const id = setInterval(tick, 10000);
+    const id = setInterval(tick, 3000);
     document.addEventListener("visibilitychange", tick);
     return () => {
       clearInterval(id);
