@@ -285,6 +285,8 @@ export interface AdminOpenPosition {
   realizedPnl: number;
   unrealizedPnl: number;
   openedAt: number;
+  stopLoss?: number | null; // protective bracket levels (open OCO exit legs), null if none set
+  takeProfit?: number | null;
 }
 
 /** A closed/reduced position across any account (admin-wide Positions view). */

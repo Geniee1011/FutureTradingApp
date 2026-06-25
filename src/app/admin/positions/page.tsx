@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useAdminStore } from "@/store/admin-store";
+import { getWsClient } from "@/lib/ws-client";
+import { USE_MOCK_FEED } from "@/lib/constants";
 import type { AdminClosedPosition, AdminOpenPosition } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
@@ -30,18 +32,61 @@ export default function AdminPositionsPage() {
   const [tab, setTab] = useState<Tab>("open");
   const [query, setQuery] = useState("");
 
-  async function load() {
-    setLoading(true);
-    const data = await getAllPositions();
-    setOpen(data.open);
-    setClosed(data.closed);
-    setLoading(false);
-  }
+  // `silent` skips the spinner so a background poll never flickers the table or the
+  // Refresh button — it just swaps in the fresh rows (incl. live TP/SL, P&L, new positions).
+  const load = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!silent) setLoading(true);
+      const data = await getAllPositions();
+      setOpen(data.open);
+      setClosed(data.closed);
+      if (!silent) setLoading(false);
+    },
+    [getAllPositions],
+  );
 
+  // Initial load (with spinner).
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
+
+  // Coalesce a burst of pushes into one reload — e.g. a bracket replace emits several
+  // order updates (cancel old legs + add new) in quick succession.
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleReload = useCallback(() => {
+    if (reloadTimer.current) return;
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = null;
+      void load({ silent: true });
+    }, 150);
+  }, [load]);
+
+  // INSTANT updates: the backend pushes an `admin_update` on every trader order/bracket/
+  // fill/cancel (and admin/risk events), so a TP/SL add or change reflects here immediately
+  // — no manual refresh, no poll latency. AdminProvider already authenticates + subscribes
+  // the admin-updates channel; we just react to it with a (debounced) silent reload.
+  useEffect(() => {
+    if (USE_MOCK_FEED) return;
+    const off = getWsClient().onMessage((msg) => {
+      if (msg.type === "admin_update") scheduleReload();
+    });
+    return off;
+  }, [scheduleReload]);
+
+  // Safety net: a slow silent poll while the tab is visible covers any missed push and
+  // keeps unrealized P&L fresh (P&L drifts each tick and isn't pushed structurally).
+  // Also refreshes immediately on tab refocus.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void load({ silent: true });
+    };
+    const id = setInterval(tick, 10000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [load]);
 
   const q = query.trim().toLowerCase();
   const matches = (s: { traderName: string; symbol: string; side: string }) =>
@@ -98,6 +143,8 @@ export default function AdminPositionsPage() {
                   <Th>Side</Th>
                   <Th className="text-right">Qty</Th>
                   <Th className="text-right">Avg price</Th>
+                  <Th className="text-right">Take profit</Th>
+                  <Th className="text-right">Stop loss</Th>
                   <Th className="text-right">Unrealized P&L</Th>
                   <Th className="text-right">Realized (booked)</Th>
                   <Th>Opened</Th>
@@ -115,13 +162,19 @@ export default function AdminPositionsPage() {
                     <Td><SideBadge side={p.side} /></Td>
                     <Td className="nums text-right">{p.quantity}</Td>
                     <Td className="nums text-right">{formatPrice(p.averagePrice)}</Td>
+                    <Td className="nums text-right">
+                      {p.takeProfit != null ? <span className="text-long">{formatPrice(p.takeProfit)}</span> : <span className="text-muted-2">—</span>}
+                    </Td>
+                    <Td className="nums text-right">
+                      {p.stopLoss != null ? <span className="text-short">{formatPrice(p.stopLoss)}</span> : <span className="text-muted-2">—</span>}
+                    </Td>
                     <Td className={cn("nums text-right", pnlClass(p.unrealizedPnl))}>{formatCurrency(p.unrealizedPnl)}</Td>
                     <Td className={cn("nums text-right", pnlClass(p.realizedPnl))}>{formatCurrency(p.realizedPnl)}</Td>
                     <Td className="nums text-muted">{formatDateTime(p.openedAt)}</Td>
                   </tr>
                 ))}
                 {openRows.length === 0 && (
-                  <EmptyRow span={8}>
+                  <EmptyRow span={10}>
                     {loading ? "Loading…" : open.length === 0 ? "No open positions across any account." : "No matching positions."}
                   </EmptyRow>
                 )}

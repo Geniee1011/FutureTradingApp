@@ -12,9 +12,25 @@ import { formatCurrency, formatPrice, formatSigned, cn } from "@/lib/utils";
 /** Open positions with live mark price + unrealized P&L, and a Close action. */
 export function PositionsTable({ variant = "table" }: { variant?: "table" | "compact" }) {
   const positions = useOrdersStore((s) => s.positions);
+  const orders = useOrdersStore((s) => s.orders);
   const closePosition = useOrdersStore((s) => s.closePosition);
   const quotes = useMarketStore((s) => s.quotes);
   const [closing, setClosing] = useState<string | null>(null);
+
+  // A filled position's protective take-profit / stop-loss live as its open OCO
+  // exit legs (bracketRole TP = limit, SL = stop). Derive them from the orders book
+  // so the columns track adds/edits live: any bracket change emits an order_update,
+  // which refreshes `orders` and re-renders these cells (null → a level, or moved).
+  function bracketLevels(symbol: string): { tp: number | null; sl: number | null } {
+    let tp: number | null = null;
+    let sl: number | null = null;
+    for (const o of orders) {
+      if (o.symbol !== symbol || (o.status !== "open" && o.status !== "partial")) continue;
+      if (o.bracketRole === "TP") tp = o.price ?? tp;
+      else if (o.bracketRole === "SL") sl = o.price ?? sl;
+    }
+    return { tp, sl };
+  }
 
   async function close(symbol: string) {
     setClosing(symbol);
@@ -81,13 +97,15 @@ export function PositionsTable({ variant = "table" }: { variant?: "table" | "com
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-sm">
+      <table className="w-full min-w-[860px] text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
             <th className="px-4 py-2.5 font-medium">Symbol</th>
             <th className="px-4 py-2.5 font-medium">Side</th>
             <th className="px-4 py-2.5 text-right font-medium">Qty</th>
             <th className="px-4 py-2.5 text-right font-medium">Avg price</th>
+            <th className="px-4 py-2.5 text-right font-medium">Take profit</th>
+            <th className="px-4 py-2.5 text-right font-medium">Stop loss</th>
             <th className="px-4 py-2.5 text-right font-medium">Mark</th>
             <th className="px-4 py-2.5 text-right font-medium">Unrealized P&L</th>
             {/* Pinned right so the Close action stays visible in narrow cards. */}
@@ -102,6 +120,7 @@ export function PositionsTable({ variant = "table" }: { variant?: "table" | "com
             const dir = p.side === "buy" ? 1 : -1;
             const pnl = (mark - p.avgPrice) * p.quantity * dir * (inst?.multiplier ?? 1);
             const pnlPct = ((mark - p.avgPrice) / p.avgPrice) * 100 * dir;
+            const { tp, sl } = bracketLevels(p.symbol);
             return (
               <tr key={p.symbol} className="group border-b border-border/60 hover:bg-surface-2">
                 <td className="px-4 py-2.5 font-medium">{p.symbol}</td>
@@ -110,6 +129,12 @@ export function PositionsTable({ variant = "table" }: { variant?: "table" | "com
                 </td>
                 <td className="nums px-4 py-2.5 text-right">{p.quantity}</td>
                 <td className="nums px-4 py-2.5 text-right">{formatPrice(p.avgPrice, precision)}</td>
+                <td className="nums px-4 py-2.5 text-right">
+                  {tp != null ? <span className="text-long">{formatPrice(tp, precision)}</span> : <span className="text-muted-2">—</span>}
+                </td>
+                <td className="nums px-4 py-2.5 text-right">
+                  {sl != null ? <span className="text-short">{formatPrice(sl, precision)}</span> : <span className="text-muted-2">—</span>}
+                </td>
                 <td className="nums px-4 py-2.5 text-right">{formatPrice(mark, precision)}</td>
                 <td className="px-4 py-2.5 text-right">
                   <div className={cn("nums font-medium", pnl >= 0 ? "text-long" : "text-short")}>

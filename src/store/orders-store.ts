@@ -159,7 +159,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     // Mock bracket: show the opposing SL/TP legs as working orders.
     if (isMarket && (input.stopLoss != null || input.takeProfit != null)) {
       const exitSide: Side = input.side === "buy" ? "sell" : "buy";
-      const leg = (t: OrderType, px: number): Order => ({
+      const leg = (t: OrderType, px: number, role: "SL" | "TP"): Order => ({
         id: `ORD-${(orderSeq++).toString()}`,
         symbol: input.symbol,
         side: exitSide,
@@ -172,10 +172,11 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         timeInForce: "GTC",
         createdAt: now,
         updatedAt: now,
+        bracketRole: role,
       });
       const legs: Order[] = [];
-      if (input.stopLoss != null) legs.push(leg("stop", input.stopLoss));
-      if (input.takeProfit != null) legs.push(leg("limit", input.takeProfit));
+      if (input.stopLoss != null) legs.push(leg("stop", input.stopLoss, "SL"));
+      if (input.takeProfit != null) legs.push(leg("limit", input.takeProfit, "TP"));
       set((s) => ({ orders: [...legs, ...s.orders] }));
     }
     return { ok: true, order };
