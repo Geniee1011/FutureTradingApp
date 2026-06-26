@@ -228,6 +228,7 @@ export interface RuleTemplate {
   minHoldTimeSecs: number;      // trade open < this → profit voided (loss still real)
   overnightHoldsProhibited: boolean;
   weekendHoldsProhibited: boolean;
+  drawdownType: "INTRADAY" | "EOD"; // INTRADAY = real-time trailing; EOD = floor snapshots at session close
   allowedInstruments: string[]; // empty = all instruments allowed
   updatedAt: number;
 }

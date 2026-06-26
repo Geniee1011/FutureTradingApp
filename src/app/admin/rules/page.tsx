@@ -106,6 +106,7 @@ function TemplateRow({ template, onSave }: { template: RuleTemplate; onSave: (pa
     vals.minHoldTimeSecs !== template.minHoldTimeSecs ||
     vals.overnightHoldsProhibited !== template.overnightHoldsProhibited ||
     vals.weekendHoldsProhibited !== template.weekendHoldsProhibited ||
+    vals.drawdownType !== template.drawdownType ||
     !sameSet(instruments, template.allowedInstruments);
 
   function toggle(sym: string) {
@@ -196,9 +197,25 @@ function TemplateRow({ template, onSave }: { template: RuleTemplate; onSave: (pa
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Risk limits</h3>
           <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {numField("maxDailyLoss",    "Max daily loss",          true)}
-            {numField("maxDrawdown",     "Trailing drawdown",       true)}
+            {numField("maxDrawdown",     "Drawdown limit",          true)}
             {numField("maxRiskPerTrade", "Max risk per trade",      true, "0 = disabled")}
             {numField("maxPositionUnits","Max position (mini-equiv)",false, "e.g. 3 = 3 minis / 30 micros")}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted">Drawdown type</label>
+              <select
+                value={vals.drawdownType}
+                onChange={(e) => setVals((v) => ({ ...v, drawdownType: e.target.value as "INTRADAY" | "EOD" }))}
+                className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-foreground focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="INTRADAY">Intraday trailing</option>
+                <option value="EOD">End-of-day trailing</option>
+              </select>
+              <p className="mt-0.5 text-xs text-muted-2">
+                {vals.drawdownType === "EOD"
+                  ? "Floor updates once at session close, off the day's peak equity"
+                  : "Floor ratchets up live on unrealized P&L"}
+              </p>
+            </div>
           </div>
 
           {/* ── Profit / advancement ── */}

@@ -29,7 +29,7 @@ import {
 const API_BASE = WS_URL ? WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "") : "";
 
 type RulePatch = Partial<Pick<AccountRule, "maxDailyLoss" | "maxDrawdown" | "profitTarget" | "maxContracts" | "allowedInstruments">>;
-type TemplatePatch = Partial<Pick<RuleTemplate, "maxDailyLoss" | "maxDrawdown" | "profitTarget" | "maxContracts" | "allowedInstruments">>;
+type TemplatePatch = Partial<Omit<RuleTemplate, "id" | "label" | "phase" | "accountSize" | "sortOrder" | "updatedAt">>;
 
 interface AdminState {
   traders: TraderRecord[];
