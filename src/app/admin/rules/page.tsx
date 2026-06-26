@@ -8,7 +8,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Button } from "@/components/ui/Button";
-import { formatCurrency, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const ALL_SYMBOLS = INSTRUMENTS.map((i) => i.symbol);
 
@@ -174,27 +174,15 @@ function TemplateRow({ template, onSave }: { template: RuleTemplate; onSave: (pa
         onClick={() => setExpanded((e) => !e)}
       >
         <span className={cn("text-xs transition-transform", expanded ? "rotate-90" : "")}>▶</span>
-        <span className="min-w-[9rem] font-semibold text-foreground">
+        <span className="font-semibold text-foreground">
           {formatAccountSize(template.accountSize)}
         </span>
-        <span className="hidden flex-1 items-center gap-5 text-xs text-muted sm:flex">
-          <SummaryItem label="Daily loss"   value={formatCurrency(template.maxDailyLoss)} />
-          <SummaryItem label="Drawdown"     value={formatCurrency(template.maxDrawdown)} />
-          {template.profitTarget > 0
-            ? <SummaryItem label="Target"  value={formatCurrency(template.profitTarget)} />
-            : <span className="text-muted-2">No target</span>
-          }
-          <SummaryItem label="Max risk/trade" value={template.maxRiskPerTrade > 0 ? formatCurrency(template.maxRiskPerTrade) : "–"} />
-          <SummaryItem label="Max units"    value={`${template.maxPositionUnits}`} />
-          <SummaryItem label="SL required"  value={template.stopLossRequired ? "Yes" : "No"} />
-          <SummaryItem
-            label="Instruments"
-            value={template.allowedInstruments.length === 0 ? "All" : `${template.allowedInstruments.length}/${ALL_SYMBOLS.length}`}
-          />
+        <span className="ml-auto flex items-center gap-2">
+          {saved && <span className="text-xs font-medium text-long">Saved ✓</span>}
+          <span className="hidden text-xs text-muted-2 sm:inline">
+            {expanded ? "Hide details" : "Edit rules"}
+          </span>
         </span>
-        {saved && !expanded && (
-          <span className="ml-auto text-xs font-medium text-long">Saved ✓</span>
-        )}
       </button>
 
       {/* Expanded edit panel */}
@@ -289,15 +277,6 @@ function TemplateRow({ template, onSave }: { template: RuleTemplate; onSave: (pa
         </div>
       )}
     </div>
-  );
-}
-
-function SummaryItem({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="flex flex-col">
-      <span className="text-muted-2">{label}</span>
-      <span className="font-medium text-foreground">{value}</span>
-    </span>
   );
 }
 
