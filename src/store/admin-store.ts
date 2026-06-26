@@ -9,6 +9,7 @@ import type {
   AdminOpenPosition,
   AdminViolation,
   EvalRule,
+  RuleTemplate,
   TraderDetail,
   TraderRecord,
   TraderStatus,
@@ -19,6 +20,7 @@ import {
   seedActivity,
   seedAdminAccounts,
   seedRules,
+  seedRuleTemplates,
   seedTraders,
   seedViolations,
 } from "@/lib/mock/data";
@@ -27,11 +29,13 @@ import {
 const API_BASE = WS_URL ? WS_URL.replace(/^ws/, "http").replace(/\/ws.*$/, "") : "";
 
 type RulePatch = Partial<Pick<AccountRule, "maxDailyLoss" | "maxDrawdown" | "profitTarget" | "maxContracts" | "allowedInstruments">>;
+type TemplatePatch = Partial<Pick<RuleTemplate, "maxDailyLoss" | "maxDrawdown" | "profitTarget" | "maxContracts" | "allowedInstruments">>;
 
 interface AdminState {
   traders: TraderRecord[];
   accounts: AdminAccount[];
   rules: AccountRule[];
+  ruleTemplates: RuleTemplate[];
   activity: ActivityEvent[];
   violations: AdminViolation[];
   seeded: boolean;
@@ -44,6 +48,10 @@ interface AdminState {
   setTraderStatus: (id: string, status: TraderStatus) => Promise<void>;
   setAccountStatus: (id: string, status: TraderStatus) => Promise<void>;
   updateRule: (accountId: string, patch: RulePatch) => Promise<void>;
+  /** Fetch all 9 global rule templates (cached in state after first load). */
+  getRuleTemplates: () => Promise<RuleTemplate[]>;
+  /** Update a global template + cascade to all linked accounts. */
+  updateRuleTemplate: (id: string, patch: TemplatePatch) => Promise<void>;
   /** Full single-trader detail bundle (live fetch, or assembled from seed in mock mode). */
   getTraderDetail: (id: string) => Promise<TraderDetail | null>;
   // --- account actions (operate on an account id) ---
@@ -92,6 +100,7 @@ export const useAdminStore = create<AdminState>((set, get) => ({
   traders: [],
   accounts: [],
   rules: [],
+  ruleTemplates: [],
   activity: [],
   violations: [],
   seeded: false,
@@ -102,7 +111,7 @@ export const useAdminStore = create<AdminState>((set, get) => ({
 
     const loadMock = () => {
       const traders = seedTraders();
-      set({ traders, accounts: seedAdminAccounts(traders), rules: seedRules(), activity: seedActivity(), violations: seedViolations(traders) });
+      set({ traders, accounts: seedAdminAccounts(traders), rules: seedRules(), ruleTemplates: seedRuleTemplates(), activity: seedActivity(), violations: seedViolations(traders) });
     };
 
     if (!live()) {
@@ -112,16 +121,17 @@ export const useAdminStore = create<AdminState>((set, get) => ({
     void get().refresh().catch(loadMock); // real data, fall back to demo data on any failure
   },
 
-  reset: () => set({ traders: [], accounts: [], rules: [], activity: [], violations: [], seeded: false }),
+  reset: () => set({ traders: [], accounts: [], rules: [], ruleTemplates: [], activity: [], violations: [], seeded: false }),
 
   refresh: async () => {
     const token = live();
     if (!token) return;
     const headers = { Authorization: `Bearer ${token}` };
-    const [tr, ac, ru, av, vi] = await Promise.all([
+    const [tr, ac, ru, rt, av, vi] = await Promise.all([
       fetch(`${API_BASE}/api/admin/traders`, { headers }),
       fetch(`${API_BASE}/api/admin/accounts`, { headers }),
       fetch(`${API_BASE}/api/admin/rules`, { headers }),
+      fetch(`${API_BASE}/api/admin/rule-templates`, { headers }),
       fetch(`${API_BASE}/api/admin/activity`, { headers }),
       fetch(`${API_BASE}/api/admin/violations`, { headers }),
     ]);
@@ -130,6 +140,7 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       traders: (await tr.json()) as TraderRecord[],
       accounts: (await ac.json()) as AdminAccount[],
       rules: (await ru.json()) as AccountRule[],
+      ruleTemplates: rt.ok ? ((await rt.json()) as RuleTemplate[]) : seedRuleTemplates(),
       activity: (await av.json()) as ActivityEvent[],
       violations: (await vi.json()) as AdminViolation[],
     });
@@ -181,6 +192,37 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       return;
     }
     set((s) => ({ rules: s.rules.map((r) => (r.accountId === accountId ? { ...r, ...patch } : r)) }));
+  },
+
+  getRuleTemplates: async () => {
+    const cached = get().ruleTemplates;
+    if (cached.length) return cached;
+    const token = live();
+    if (token) {
+      const res = await fetch(`${API_BASE}/api/admin/rule-templates`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+      if (res?.ok) {
+        const data = (await res.json()) as RuleTemplate[];
+        set({ ruleTemplates: data });
+        return data;
+      }
+    }
+    const mock = seedRuleTemplates();
+    set({ ruleTemplates: mock });
+    return mock;
+  },
+
+  updateRuleTemplate: async (id, patch) => {
+    const token = live();
+    if (token) {
+      await fetch(`${API_BASE}/api/admin/rule-templates/${id}`, {
+        method: "POST",
+        headers: authHeaders(token),
+        body: JSON.stringify(patch),
+      }).catch(() => {});
+      await get().refresh().catch(() => {});
+      return;
+    }
+    set((s) => ({ ruleTemplates: s.ruleTemplates.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t)) }));
   },
 
   getTraderDetail: async (id) => {

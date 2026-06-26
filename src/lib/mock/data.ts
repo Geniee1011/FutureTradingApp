@@ -15,6 +15,7 @@ import type {
   Order,
   OrderStatus,
   Position,
+  RuleTemplate,
   Side,
   TraderRecord,
   Transaction,
@@ -266,6 +267,36 @@ export function seedRules(): AccountRule[] {
       allowedInstruments: rng() > 0.35 ? INSTRUMENTS.map((x) => x.symbol) : ["ES", "MES", "NQ", "MNQ"],
     };
   });
+}
+
+export function seedRuleTemplates(): RuleTemplate[] {
+  const ts = NOW;
+  const tpl = (
+    id: string, label: string, phase: string, accountSize: number, sortOrder: number,
+    maxDailyLoss: number, maxDrawdown: number, profitTarget: number, maxContracts: number,
+    minTradingDays: number, maxDailyProfitPct: number, maxRiskPerTrade: number,
+    maxPositionUnits: number, stopLossRequired: boolean, minHoldTimeSecs: number,
+    overnightHoldsProhibited: boolean, weekendHoldsProhibited: boolean,
+  ): RuleTemplate => ({
+    id, label, phase, accountSize, sortOrder,
+    maxDailyLoss, maxDrawdown, profitTarget, maxContracts,
+    minTradingDays, maxDailyProfitPct, maxRiskPerTrade,
+    maxPositionUnits, stopLossRequired, minHoldTimeSecs,
+    overnightHoldsProhibited, weekendHoldsProhibited,
+    allowedInstruments: [], updatedAt: ts,
+  });
+  //                   id          label                               phase              size      ord  dly    dd     tgt   ctrs days  pct   risk  units  sl     secs ovnt  wknd
+  return [
+    tpl("c1_50k",  "Challenge Phase 1 — $50,000",  "Challenge Phase 1", 50000,    1, 1000,  2000,  1500, 3, 5, 30,  500,  3.0, true,  15, true,  true),
+    tpl("c1_100k", "Challenge Phase 1 — $100,000", "Challenge Phase 1", 100000,   2, 2000,  4000,  3000, 3, 5, 30,  1000, 3.0, true,  15, true,  true),
+    tpl("c2_50k",  "Challenge Phase 2 — $50,000",  "Challenge Phase 2", 50000,    3, 1000,  1500,  3000, 3, 5, 30,  500,  3.0, true,  15, true,  true),
+    tpl("c2_100k", "Challenge Phase 2 — $100,000", "Challenge Phase 2", 100000,   4, 2000,  3000,  6000, 3, 5, 30,  1000, 3.0, true,  15, true,  true),
+    tpl("f_50k",   "Funded — $50,000",             "Funded",            50000,    5, 1000,  2000,  0,    3, 0, 0,   0,    3.0, true,  15, true,  true),
+    tpl("f_100k",  "Funded — $100,000",            "Funded",            100000,   6, 2000,  4000,  0,    3, 0, 0,   0,    3.0, true,  15, true,  true),
+    tpl("f_250k",  "Funded — $250,000",            "Funded",            250000,   7, 5000,  10000, 0,   10, 0, 0,   0,   10.0, true,  15, true,  true),
+    tpl("f_500k",  "Funded — $500,000",            "Funded",            500000,   8, 10000, 20000, 0,   20, 0, 0,   0,   20.0, true,  15, true,  true),
+    tpl("f_1m",    "Funded — $1,000,000",          "Funded",            1000000,  9, 20000, 40000, 0,   40, 0, 0,   0,   40.0, true,  15, true,  true),
+  ];
 }
 
 export function seedActivity(count = 40): ActivityEvent[] {

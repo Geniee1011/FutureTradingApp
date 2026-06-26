@@ -29,7 +29,7 @@ interface OrdersState {
   seed: () => void;
   /** Clear the book (on logout / user switch) so the next user loads fresh. */
   reset: () => void;
-  placeOrder: (input: PlaceOrderInput) => Promise<{ ok: boolean; order?: Order; error?: string }>;
+  placeOrder: (input: PlaceOrderInput) => Promise<{ ok: boolean; order?: Order; error?: string; suggestion?: { symbol: string; quantity: number; risk: number } }>;
   closePosition: (symbol: string) => Promise<{ ok: boolean; error?: string }>;
   cancelOrder: (id: string) => Promise<{ ok: boolean; error?: string }>;
   /** Modify a working order's price and/or its bracket SL/TP (chart drag-to-edit). */
@@ -121,12 +121,12 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
             takeProfit: input.takeProfit ?? null,
           }),
         });
-        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+        const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; suggestion?: { symbol: string; quantity: number; risk: number } };
         if (res.ok && data.ok) {
           await get().refresh();
           return { ok: true };
         }
-        return { ok: false, error: data.error ?? "Order rejected." };
+        return { ok: false, error: data.error ?? "Order rejected.", suggestion: data.suggestion };
       } catch {
         return { ok: false, error: "Could not reach the server." };
       }

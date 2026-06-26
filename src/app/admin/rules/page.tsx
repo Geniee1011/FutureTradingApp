@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAdminStore } from "@/store/admin-store";
-import type { AccountRule } from "@/lib/types";
+import type { RuleTemplate } from "@/lib/types";
 import { INSTRUMENTS } from "@/lib/constants";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
@@ -10,156 +10,294 @@ import { Stat } from "@/components/ui/Stat";
 import { Button } from "@/components/ui/Button";
 import { formatCurrency, cn } from "@/lib/utils";
 
-type Editable = Pick<AccountRule, "maxDailyLoss" | "maxDrawdown" | "profitTarget" | "maxContracts">;
-type RulePatch = Editable & { allowedInstruments: string[] };
 const ALL_SYMBOLS = INSTRUMENTS.map((i) => i.symbol);
-const FIELDS: { key: keyof Editable; label: string; money: boolean }[] = [
-  { key: "maxDailyLoss", label: "Max daily loss", money: true },
-  { key: "maxDrawdown", label: "Max drawdown", money: true },
-  { key: "profitTarget", label: "Profit target", money: true },
-  { key: "maxContracts", label: "Max contracts", money: false },
-];
+
+type TemplatePatch = Partial<RuleTemplate> & { allowedInstruments: string[] };
+
+const PHASE_ORDER = ["Challenge Phase 1", "Challenge Phase 2", "Funded"];
+
+function formatAccountSize(n: number): string {
+  if (n >= 1_000_000) return `$${n / 1_000_000}M`;
+  if (n >= 1_000)     return `$${n / 1_000}K`;
+  return `$${n}`;
+}
 
 export default function RulesPage() {
-  const rules = useAdminStore((s) => s.rules);
-  const updateRule = useAdminStore((s) => s.updateRule);
+  const getRuleTemplates   = useAdminStore((s) => s.getRuleTemplates);
+  const updateRuleTemplate = useAdminStore((s) => s.updateRuleTemplate);
 
-  const avgTarget = rules.length ? rules.reduce((a, r) => a + r.profitTarget, 0) / rules.length : 0;
-  const avgDrawdown = rules.length ? rules.reduce((a, r) => a + r.maxDrawdown, 0) / rules.length : 0;
+  const [templates, setTemplates] = useState<RuleTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void getRuleTemplates().then((data) => {
+      setTemplates(data);
+      setLoading(false);
+    });
+  }, [getRuleTemplates]);
+
+  const grouped = PHASE_ORDER.map((phase) => ({
+    phase,
+    items: templates.filter((t) => t.phase === phase),
+  }));
+
+  const handleSave = async (id: string, patch: TemplatePatch) => {
+    await updateRuleTemplate(id, patch);
+    setTemplates((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  };
 
   return (
     <div>
       <PageHeader
         title="Evaluation Rules"
-        subtitle="Per-account risk limits enforced live by the evaluation engine."
+        subtitle="Global risk limits per account tier — changes apply to every trader in that tier."
       />
 
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Accounts" value={rules.length} />
-        <Stat label="Avg profit target" value={formatCurrency(avgTarget)} tone="long" />
-        <Stat label="Avg max drawdown" value={formatCurrency(avgDrawdown)} />
+        <Stat label="Account tiers" value={templates.length} />
+        <Stat label="Challenge phases" value={2} />
+        <Stat label="Funded tiers" value={templates.filter((t) => t.phase === "Funded").length} />
         <Stat label="Enforcement" value="Live" tone="long" />
       </div>
 
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[820px] text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
-              <th className="px-4 py-2.5 font-medium">Account</th>
-              {FIELDS.map((f) => (
-                <th key={f.key} className="px-4 py-2.5 text-right font-medium">{f.label}</th>
-              ))}
-              <th className="px-4 py-2.5 text-right font-medium">Instruments</th>
-              <th className="px-4 py-2.5 text-right font-medium">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rules.map((r) => (
-              <RuleRow key={r.accountId} rule={r} onSave={(patch) => updateRule(r.accountId, patch)} />
-            ))}
-            {rules.length === 0 && (
-              <tr>
-                <td colSpan={FIELDS.length + 3} className="px-4 py-12 text-center text-sm text-muted">
-                  No accounts to show.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+      {loading ? (
+        <Card className="px-4 py-12 text-center text-sm text-muted">Loading templates…</Card>
+      ) : (
+        <div className="space-y-4">
+          {grouped.map(({ phase, items }) => (
+            <section key={phase}>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">{phase}</h2>
+              <Card className="overflow-hidden divide-y divide-border">
+                {items.length === 0 && (
+                  <p className="px-4 py-6 text-sm text-muted-2">No templates for this phase.</p>
+                )}
+                {items.map((tpl) => (
+                  <TemplateRow key={tpl.id} template={tpl} onSave={(p) => handleSave(tpl.id, p)} />
+                ))}
+              </Card>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function RuleRow({ rule, onSave }: { rule: AccountRule; onSave: (patch: RulePatch) => Promise<void> }) {
-  const [vals, setVals] = useState<Editable>({
-    maxDailyLoss: rule.maxDailyLoss,
-    maxDrawdown: rule.maxDrawdown,
-    profitTarget: rule.profitTarget,
-    maxContracts: rule.maxContracts,
-  });
-  const [instruments, setInstruments] = useState<string[]>(rule.allowedInstruments ?? []);
+function TemplateRow({ template, onSave }: { template: RuleTemplate; onSave: (patch: TemplatePatch) => Promise<void> }) {
   const [expanded, setExpanded] = useState(false);
+  const [vals, setVals] = useState({ ...template });
+  const [instruments, setInstruments] = useState<string[]>(template.allowedInstruments);
+  const [instrExpanded, setInstrExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  const numericDirty = FIELDS.some((f) => vals[f.key] !== rule[f.key]);
-  const instrDirty = !sameSet(instruments, rule.allowedInstruments ?? []);
-  const dirty = numericDirty || instrDirty;
+  const effectiveInstruments = instruments.length === 0 ? ALL_SYMBOLS : instruments;
+
+  const dirty =
+    vals.maxDailyLoss !== template.maxDailyLoss ||
+    vals.maxDrawdown  !== template.maxDrawdown  ||
+    vals.profitTarget !== template.profitTarget ||
+    vals.maxContracts !== template.maxContracts ||
+    vals.minTradingDays !== template.minTradingDays ||
+    vals.maxDailyProfitPct !== template.maxDailyProfitPct ||
+    vals.maxRiskPerTrade !== template.maxRiskPerTrade ||
+    vals.maxPositionUnits !== template.maxPositionUnits ||
+    vals.stopLossRequired !== template.stopLossRequired ||
+    vals.minHoldTimeSecs !== template.minHoldTimeSecs ||
+    vals.overnightHoldsProhibited !== template.overnightHoldsProhibited ||
+    vals.weekendHoldsProhibited !== template.weekendHoldsProhibited ||
+    !sameSet(instruments, template.allowedInstruments);
 
   function toggle(sym: string) {
-    setInstruments((cur) => (cur.includes(sym) ? cur.filter((s) => s !== sym) : [...cur, sym]));
+    setInstruments((cur) => {
+      const active = cur.length === 0 ? ALL_SYMBOLS : cur;
+      const next = active.includes(sym) ? active.filter((s) => s !== sym) : [...active, sym];
+      return next.length === ALL_SYMBOLS.length ? [] : next;
+    });
   }
 
   async function save() {
     setSaving(true);
     await onSave({ ...vals, allowedInstruments: instruments });
     setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  }
+
+  function numField(key: keyof typeof vals, label: string, money: boolean, hint?: string) {
+    return (
+      <div key={key}>
+        <label className="mb-1 block text-xs font-medium text-muted">{label}</label>
+        <div className="flex items-center gap-1">
+          {money && <span className="text-sm text-muted-2">$</span>}
+          <input
+            type="number"
+            min="0"
+            value={vals[key] as number}
+            onChange={(e) => setVals((v) => ({ ...v, [key]: Number(e.target.value) }))}
+            className="nums w-full rounded-md border border-border bg-surface px-2 py-1.5 text-right text-sm text-foreground focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+        </div>
+        {hint && <p className="mt-0.5 text-xs text-muted-2">{hint}</p>}
+      </div>
+    );
+  }
+
+  function toggle2(key: keyof typeof vals, label: string, hint?: string) {
+    const on = vals[key] as boolean;
+    return (
+      <div key={key} className="flex items-start gap-3">
+        <button
+          role="switch"
+          aria-checked={on}
+          onClick={() => setVals((v) => ({ ...v, [key]: !on }))}
+          className={cn(
+            "mt-0.5 h-5 w-9 shrink-0 rounded-full border-2 transition-colors",
+            on ? "border-primary bg-primary" : "border-border bg-surface-2",
+          )}
+        >
+          <span className={cn("block h-3.5 w-3.5 translate-x-0.5 rounded-full bg-white transition-transform", on ? "translate-x-[18px]" : "")} />
+        </button>
+        <div>
+          <span className="text-xs font-medium text-foreground">{label}</span>
+          {hint && <p className="text-xs text-muted-2">{hint}</p>}
+        </div>
+      </div>
+    );
   }
 
   return (
-    <>
-      <tr className="border-b border-border/60 hover:bg-surface-2">
-        <td className="px-4 py-2.5">
-          <div className="nums font-medium text-foreground">{rule.accountId}</div>
-          <div className="text-xs text-muted-2">{rule.traderName}</div>
-        </td>
-        {FIELDS.map((f) => (
-          <td key={f.key} className="px-4 py-2.5 text-right">
-            <div className="flex items-center justify-end gap-1">
-              {f.money && <span className="text-muted-2">$</span>}
-              <input
-                type="number"
-                min="0"
-                value={vals[f.key]}
-                onChange={(e) => setVals((v) => ({ ...v, [f.key]: Number(e.target.value) }))}
-                className="nums w-24 rounded-md border border-border bg-surface-2 px-2 py-1 text-right text-sm text-foreground focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
-              />
-            </div>
-          </td>
-        ))}
-        <td className="px-4 py-2.5 text-right">
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            className={cn("rounded-md border border-border px-2 py-1 text-xs font-medium hover:bg-surface-3", instrDirty && "border-primary/60 text-primary")}
-          >
-            {instruments.length === ALL_SYMBOLS.length ? "All" : `${instruments.length}/${ALL_SYMBOLS.length}`} ▾
-          </button>
-        </td>
-        <td className="px-4 py-2.5 text-right">
-          <Button size="sm" variant="secondary" loading={saving} disabled={!dirty || saving} onClick={save}>
-            Save
-          </Button>
-        </td>
-      </tr>
+    <div>
+      {/* Collapsed header row */}
+      <button
+        className="flex w-full items-center gap-4 px-4 py-3 text-left hover:bg-surface-2 transition-colors"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <span className={cn("text-xs transition-transform", expanded ? "rotate-90" : "")}>▶</span>
+        <span className="min-w-[9rem] font-semibold text-foreground">
+          {formatAccountSize(template.accountSize)}
+        </span>
+        <span className="hidden flex-1 items-center gap-5 text-xs text-muted sm:flex">
+          <SummaryItem label="Daily loss"   value={formatCurrency(template.maxDailyLoss)} />
+          <SummaryItem label="Drawdown"     value={formatCurrency(template.maxDrawdown)} />
+          {template.profitTarget > 0
+            ? <SummaryItem label="Target"  value={formatCurrency(template.profitTarget)} />
+            : <span className="text-muted-2">No target</span>
+          }
+          <SummaryItem label="Max risk/trade" value={template.maxRiskPerTrade > 0 ? formatCurrency(template.maxRiskPerTrade) : "–"} />
+          <SummaryItem label="Max units"    value={`${template.maxPositionUnits}`} />
+          <SummaryItem label="SL required"  value={template.stopLossRequired ? "Yes" : "No"} />
+          <SummaryItem
+            label="Instruments"
+            value={template.allowedInstruments.length === 0 ? "All" : `${template.allowedInstruments.length}/${ALL_SYMBOLS.length}`}
+          />
+        </span>
+        {saved && !expanded && (
+          <span className="ml-auto text-xs font-medium text-long">Saved ✓</span>
+        )}
+      </button>
+
+      {/* Expanded edit panel */}
       {expanded && (
-        <tr className="border-b border-border/60 bg-surface-2/40">
-          <td colSpan={FIELDS.length + 3} className="px-4 py-3">
-            <div className="mb-2 flex items-center gap-3 text-xs text-muted">
-              <span>Allowed instruments</span>
-              <button className="text-primary hover:underline" onClick={() => setInstruments(ALL_SYMBOLS)}>Select all</button>
-              <button className="text-primary hover:underline" onClick={() => setInstruments([])}>Clear</button>
+        <div className="border-t border-border/60 bg-surface-2/40 px-4 pb-4 pt-3">
+          <p className="mb-4 text-xs text-muted">
+            Changes here apply globally to every account on the <strong>{template.label}</strong> tier.
+          </p>
+
+          {/* ── Risk limits ── */}
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Risk limits</h3>
+          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {numField("maxDailyLoss",    "Max daily loss",          true)}
+            {numField("maxDrawdown",     "Trailing drawdown",       true)}
+            {numField("maxRiskPerTrade", "Max risk per trade",      true, "0 = disabled")}
+            {numField("maxPositionUnits","Max position (mini-equiv)",false, "e.g. 3 = 3 minis / 30 micros")}
+          </div>
+
+          {/* ── Profit / advancement ── */}
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Profit &amp; advancement</h3>
+          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {numField("profitTarget",      "Profit target",         true,  "0 = no target (funded accounts)")}
+            {numField("minTradingDays",    "Min trading days",      false, "0 = disabled")}
+            {numField("maxDailyProfitPct", "Max daily contribution",false, "% of target (30 = 30%)")}
+            {numField("maxContracts",      "Max contracts (legacy)", false, "overridden by max units when > 0")}
+          </div>
+
+          {/* ── Hold-time & bracket ── */}
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Hold time &amp; bracket</h3>
+          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {numField("minHoldTimeSecs", "Min hold time (seconds)", false, "profit voided if closed before")}
+          </div>
+
+          {/* ── Prohibitions (toggles) ── */}
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Prohibitions</h3>
+          <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {toggle2("stopLossRequired",          "SL + TP required",       "Both stop loss and take profit must be set at entry")}
+            {toggle2("overnightHoldsProhibited",  "Overnight holds banned",  "Positions auto-close at market close")}
+            {toggle2("weekendHoldsProhibited",    "Weekend holds banned",    "Positions auto-close Friday at market close")}
+          </div>
+
+          {/* ── Instruments ── */}
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-2">Allowed instruments</h3>
+          <div className="mb-4">
+            <div className="mb-2 flex items-center gap-3">
+              <button
+                className={cn(
+                  "rounded-md border px-2 py-0.5 text-xs font-medium hover:bg-surface-3",
+                  !sameSet(instruments, template.allowedInstruments) ? "border-primary/60 text-primary" : "border-border text-muted",
+                )}
+                onClick={() => setInstrExpanded((e) => !e)}
+              >
+                {instruments.length === 0 ? "All" : `${instruments.length}/${ALL_SYMBOLS.length}`} ▾
+              </button>
+              {instrExpanded && (
+                <>
+                  <button className="text-xs text-primary hover:underline" onClick={() => setInstruments([])}>All</button>
+                  <button className="text-xs text-primary hover:underline" onClick={() => setInstruments(ALL_SYMBOLS)}>Restrict all</button>
+                </>
+              )}
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {ALL_SYMBOLS.map((sym) => {
-                const on = instruments.includes(sym);
-                return (
-                  <button
-                    key={sym}
-                    onClick={() => toggle(sym)}
-                    className={cn(
-                      "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
-                      on ? "border-primary/40 bg-primary/15 text-primary" : "border-border text-muted hover:text-foreground",
-                    )}
-                  >
-                    {sym}
-                  </button>
-                );
-              })}
-            </div>
-          </td>
-        </tr>
+            {instrExpanded && (
+              <div className="flex flex-wrap gap-1.5">
+                {ALL_SYMBOLS.map((sym) => {
+                  const on = effectiveInstruments.includes(sym);
+                  return (
+                    <button
+                      key={sym}
+                      onClick={() => toggle(sym)}
+                      className={cn(
+                        "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                        on
+                          ? "border-primary/40 bg-primary/15 text-primary"
+                          : "border-border text-muted hover:text-foreground",
+                      )}
+                    >
+                      {sym}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button size="sm" loading={saving} disabled={!dirty || saving} onClick={save}>
+              Save changes
+            </Button>
+            {saved && <span className="text-xs font-medium text-long">Saved — all linked accounts updated ✓</span>}
+            {dirty && !saved && <span className="text-xs text-muted">Unsaved changes</span>}
+          </div>
+        </div>
       )}
-    </>
+    </div>
+  );
+}
+
+function SummaryItem({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="flex flex-col">
+      <span className="text-muted-2">{label}</span>
+      <span className="font-medium text-foreground">{value}</span>
+    </span>
   );
 }
 

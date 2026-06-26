@@ -208,6 +208,30 @@ export interface AccountRule {
   allowedInstruments: string[];
 }
 
+/** Global rule template for one account tier (e.g. "Challenge Phase 1 — $50,000").
+ *  Editing a template cascades the values to every linked account's per-account Rule. */
+export interface RuleTemplate {
+  id: string;
+  label: string;
+  phase: string;        // 'Challenge Phase 1' | 'Challenge Phase 2' | 'Funded'
+  accountSize: number;  // 50000 | 100000 | 250000 | 500000 | 1000000
+  sortOrder: number;
+  maxDailyLoss: number;
+  maxDrawdown: number;
+  profitTarget: number; // 0 = no target (funded accounts)
+  maxContracts: number;
+  minTradingDays: number;       // distinct calendar days before target qualifies for pass
+  maxDailyProfitPct: number;    // % of profit target; day contribution cap
+  maxRiskPerTrade: number;      // max implied SL risk per entry (0 = disabled)
+  maxPositionUnits: number;     // cross-instrument mini-equivalents (0 = disabled)
+  stopLossRequired: boolean;    // SL + TP mandatory on every entry
+  minHoldTimeSecs: number;      // trade open < this → profit voided (loss still real)
+  overnightHoldsProhibited: boolean;
+  weekendHoldsProhibited: boolean;
+  allowedInstruments: string[]; // empty = all instruments allowed
+  updatedAt: number;
+}
+
 /* Single-trader detail (admin/traders/:id). */
 export interface TraderDetailAccount {
   id: string;
