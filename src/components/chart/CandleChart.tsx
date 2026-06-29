@@ -19,6 +19,7 @@ import {
 import { getWsClient } from "@/lib/ws-client";
 import { useMarketStore } from "@/store/market-store";
 import { useOrdersStore } from "@/store/orders-store";
+import { useAccountStore } from "@/store/account-store";
 import { useThemeStore } from "@/store/theme-store";
 import { getChartColors } from "@/lib/chart-theme";
 import { getInstrument } from "@/lib/constants";
@@ -162,6 +163,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const setPositionBracket = useOrdersStore((s) => s.setPositionBracket);
   const allOrders = useOrdersStore((s) => s.orders);
   const allPositions = useOrdersStore((s) => s.positions);
+  const bracketRequired = useAccountStore((s) => s.summary?.rule?.stopLossRequired ?? false);
   const theme = useThemeStore((s) => s.theme);
 
   // Resting (working) limit/stop orders for this symbol — drawn on the chart as
@@ -1107,6 +1109,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
                 ? `${t.qty} ${t.side === "buy" ? "BUY" : "SELL"} ${t.type.toUpperCase()}`
                 : t.role;
             const stop = (e: React.MouseEvent) => e.stopPropagation();
+            // While in a position, a protective SL/TP leg can be moved (drag) but not
+            // removed when the account requires brackets — so hide its delete control.
+            const isPositionLeg = !isPosition && !isEntry;
+            const lockBracket = isPositionLeg && bracketRequired && allPositions.some((p) => p.symbol === symbol);
             const isPending =
               pendingConfirm != null &&
               ((pendingConfirm.kind === "move" && pendingConfirm.lineKey === t.lineKey) ||
@@ -1163,15 +1169,21 @@ export function CandleChart({ symbol }: { symbol: string }) {
                         +TP
                       </button>
                     )}
-                    <button
-                      type="button"
-                      title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
-                      onMouseDown={stop}
-                      onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
-                      className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
-                    >
-                      ✕
-                    </button>
+                    {lockBracket ? (
+                      <span title="Required while in a position — drag to move, can't be removed" className="cursor-default text-[10px] leading-none opacity-70">
+                        🔒
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
+                        onMouseDown={stop}
+                        onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
+                        className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </>
                 )}
               </div>
