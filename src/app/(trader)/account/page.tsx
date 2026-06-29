@@ -87,9 +87,22 @@ export default function AccountPage() {
                 pct={drawdownPct}
                 tone={drawdownPct > 80 ? "short" : drawdownPct > 50 ? "warning" : "neutral"}
               />
-              <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
-                <span className="text-muted">Max position size</span>
-                <span className="nums font-medium">{rule.maxContracts} contracts</span>
+              <div className="space-y-2.5 border-t border-border pt-3 text-sm">
+                <LimitRow
+                  label="Max position size"
+                  value={
+                    rule.maxPositionUnits && rule.maxPositionUnits > 0
+                      ? `${rule.maxPositionUnits} minis / ${rule.maxPositionUnits * 10} micros`
+                      : `${rule.maxContracts} contracts`
+                  }
+                />
+                {rule.maxRiskPerTrade != null && rule.maxRiskPerTrade > 0 && (
+                  <LimitRow label="Max risk / trade" value={formatCurrency(rule.maxRiskPerTrade)} />
+                )}
+                {rule.stopLossRequired && <LimitRow label="Stop loss & take profit" value="Required" />}
+                {rule.minHoldTimeSecs != null && rule.minHoldTimeSecs > 0 && (
+                  <LimitRow label="Min hold time" value={`${rule.minHoldTimeSecs}s per trade`} />
+                )}
               </div>
             </div>
           </Card>
@@ -224,6 +237,15 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex items-center justify-between">
       <span className="text-muted">{label}</span>
       <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+function LimitRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-muted">{label}</span>
+      <span className="nums font-medium">{value}</span>
     </div>
   );
 }
