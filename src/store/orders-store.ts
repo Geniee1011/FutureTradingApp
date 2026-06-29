@@ -19,6 +19,9 @@ export interface PlaceOrderInput {
   timeInForce?: TimeInForce;
   stopLoss?: number | null;
   takeProfit?: number | null;
+  /** Bracket as a positive price distance from the fill — keeps SL/TP symmetric on market fills. */
+  slOffset?: number | null;
+  tpOffset?: number | null;
 }
 
 interface OrdersState {
@@ -119,6 +122,8 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
             price: input.price ?? null,
             stopLoss: input.stopLoss ?? null,
             takeProfit: input.takeProfit ?? null,
+            slOffset: input.slOffset ?? null,
+            tpOffset: input.tpOffset ?? null,
           }),
         });
         const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; suggestion?: { symbol: string; quantity: number; risk: number } };

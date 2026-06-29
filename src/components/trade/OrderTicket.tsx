@@ -59,10 +59,12 @@ export function OrderTicket({ symbol }: { symbol: string }) {
     return ref + dir * t * tickSize;
   };
 
-  // Resolve the active bracket to SL/TP prices for an order at `entry`.
-  const bracketFor = (orderSide: Side, entry: number) => ({
-    sl: slTicks ? Number(ticksToPrice(slTicks, true, orderSide, entry).toFixed(precision)) || null : null,
-    tp: tpTicks ? Number(ticksToPrice(tpTicks, false, orderSide, entry).toFixed(precision)) || null : null,
+  // Bracket as POSITIVE price offsets (ticks → price distance). Sent to the backend so the
+  // SL/TP are anchored to the ACTUAL fill price — symmetric ticks stay symmetric even when a
+  // market order fills a tick or two off the quote shown when the trader clicked.
+  const bracketOffsets = () => ({
+    slOffset: slTicks ? (parseFloat(slTicks) || 0) * tickSize || null : null,
+    tpOffset: tpTicks ? (parseFloat(tpTicks) || 0) * tickSize || null : null,
   });
 
   // Preview SL/TP (shown under inputs + risk/reward readout), using BUY orientation.
@@ -86,9 +88,6 @@ export function OrderTicket({ symbol }: { symbol: string }) {
     setSubmitting(true);
     const sym = overrideSymbol ?? symbol;
     const qty = overrideQty ?? qtyNum;
-    // For the micro-alternative we still orient the bracket to the original entry price.
-    const entry = overrideSymbol ? (quote?.price ?? 0) : refPrice;
-    const { sl, tp } = bracketFor(orderSide, entry);
     const res = await placeOrder({
       symbol: sym,
       side: orderSide,
@@ -96,8 +95,7 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       quantity: qty,
       price: type === "market" ? null : parseFloat(price),
       timeInForce: tif,
-      stopLoss: sl,
-      takeProfit: tp,
+      ...bracketOffsets(),
     });
     setSubmitting(false);
     if (res.ok) {
@@ -128,8 +126,6 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       showFeedback(false, "No live bid/ask available yet.");
       return;
     }
-    const entry = mode === "mkt" ? quote?.price ?? 0 : (limitPrice as number);
-    const { sl, tp } = bracketFor(orderSide, entry);
     setSubmitting(true);
     const res = await placeOrder({
       symbol,
@@ -138,8 +134,7 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       quantity: qtyNum,
       price: orderType === "market" ? null : (limitPrice as number),
       timeInForce: tif,
-      stopLoss: sl,
-      takeProfit: tp,
+      ...bracketOffsets(),
     });
     setSubmitting(false);
     if (res.ok) {

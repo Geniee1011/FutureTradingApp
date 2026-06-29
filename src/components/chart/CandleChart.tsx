@@ -78,9 +78,14 @@ function fillGaps(
   vols: HistogramData<UTCTimestamp>[],
   resolutionSec: number,
 ): { candles: CandlestickData<UTCTimestamp>[]; vols: HistogramData<UTCTimestamp>[] } {
-  if (candles.length < 2) return { candles, vols };
+  if (candles.length < 2) {
+    console.log(`[gap-fill] history load: ${candles.length} bars, too few to scan`);
+    return { candles, vols };
+  }
   const outC: CandlestickData<UTCTimestamp>[] = [];
   const outV: HistogramData<UTCTimestamp>[] = [];
+  const filled: number[] = []; // gap sizes we filled
+  const skipped: number[] = []; // gap sizes too big to fill (> cap)
   for (let i = 0; i < candles.length; i++) {
     outC.push(candles[i]!);
     outV.push(vols[i]!);
@@ -89,13 +94,21 @@ function fillGaps(
     if (!nxt) break;
     const missing = (Number(nxt.time) - Number(cur.time)) / resolutionSec - 1;
     if (missing > 0 && missing <= GAP_FILL_MAX_BARS) {
+      filled.push(missing);
       for (let k = 1; k <= missing; k++) {
         const t = Number(cur.time) + k * resolutionSec;
         outC.push(flatCandle(t, cur.close));
         outV.push({ time: t as UTCTimestamp, value: 0, color: FLAT_VOL_COLOR });
       }
+    } else if (missing > GAP_FILL_MAX_BARS) {
+      skipped.push(missing);
     }
   }
+  // DIAGNOSTIC (temporary): shows whether gap-fill ran, gaps found, and what was filled/skipped.
+  console.log(
+    `[gap-fill] history load: res=${resolutionSec}s, in=${candles.length} → out=${outC.length} bars` +
+      `, filled gaps=[${filled.join(",")}], skipped (>${GAP_FILL_MAX_BARS})=[${skipped.join(",")}]`,
+  );
   return { candles: outC, vols: outV };
 }
 
@@ -525,6 +538,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
       // forward as flat bars across the gap — but only short gaps (cap as in fillGaps).
       if (last) {
         const missing = (bucket - (last.time as number)) / resolution - 1;
+        if (missing > 0) {
+          // DIAGNOSTIC (temporary): a live gap opened — log its size and whether we fill it.
+          console.log(`[gap-fill] live: new bucket, gap=${missing} bars, ${missing <= GAP_FILL_MAX_BARS ? "filling" : "SKIP (>cap)"}`);
+        }
         if (missing > 0 && missing <= GAP_FILL_MAX_BARS) {
           for (let k = 1; k <= missing; k++) {
             const t = (last.time as number) + k * resolution;
