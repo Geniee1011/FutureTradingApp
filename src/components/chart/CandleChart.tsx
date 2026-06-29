@@ -19,7 +19,6 @@ import {
 import { getWsClient } from "@/lib/ws-client";
 import { useMarketStore } from "@/store/market-store";
 import { useOrdersStore } from "@/store/orders-store";
-import { useAccountStore } from "@/store/account-store";
 import { useThemeStore } from "@/store/theme-store";
 import { getChartColors } from "@/lib/chart-theme";
 import { getInstrument } from "@/lib/constants";
@@ -56,6 +55,49 @@ const DEFAULT_HISTORY_COUNT = 500;
 // to the left — this just keeps the opening view a readable recent window instead of
 // squashing all ~7 days into hairline candles. 480 ≈ 8 hours at 1m.
 const DEFAULT_VISIBLE_BARS = 480;
+
+// Gap-fill: when a stretch of buckets has no trades, carry the last close forward as
+// flat 0-volume bars so the chart stays continuous. Capped so we only fill short
+// illiquidity gaps — long breaks (session/maintenance/weekend) stay as real gaps
+// rather than drawing a long flat line across them. 30 bars = 30 min at 1m.
+const GAP_FILL_MAX_BARS = 30;
+const FLAT_VOL_COLOR = "#8b95a755"; // muted — filled bars carry 0 volume anyway
+
+/** A flat carry-forward candle at `close`, for an empty bucket at `time` (epoch seconds). */
+function flatCandle(time: number, close: number): CandlestickData<UTCTimestamp> {
+  return { time: time as UTCTimestamp, open: close, high: close, low: close, close };
+}
+
+/**
+ * Insert carry-forward flat bars across interior gaps so the series is continuous.
+ * Only fills gaps up to GAP_FILL_MAX_BARS buckets wide — wider gaps (session/weekend
+ * breaks) are left intact. `candles` and `vols` are parallel arrays (same indices).
+ */
+function fillGaps(
+  candles: CandlestickData<UTCTimestamp>[],
+  vols: HistogramData<UTCTimestamp>[],
+  resolutionSec: number,
+): { candles: CandlestickData<UTCTimestamp>[]; vols: HistogramData<UTCTimestamp>[] } {
+  if (candles.length < 2) return { candles, vols };
+  const outC: CandlestickData<UTCTimestamp>[] = [];
+  const outV: HistogramData<UTCTimestamp>[] = [];
+  for (let i = 0; i < candles.length; i++) {
+    outC.push(candles[i]!);
+    outV.push(vols[i]!);
+    const cur = candles[i]!;
+    const nxt = candles[i + 1];
+    if (!nxt) break;
+    const missing = (Number(nxt.time) - Number(cur.time)) / resolutionSec - 1;
+    if (missing > 0 && missing <= GAP_FILL_MAX_BARS) {
+      for (let k = 1; k <= missing; k++) {
+        const t = Number(cur.time) + k * resolutionSec;
+        outC.push(flatCandle(t, cur.close));
+        outV.push({ time: t as UTCTimestamp, value: 0, color: FLAT_VOL_COLOR });
+      }
+    }
+  }
+  return { candles: outC, vols: outV };
+}
 
 /** Pending click-to-trade ticket: chart pixel position + the price clicked. */
 interface ChartTicket {
@@ -163,7 +205,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const setPositionBracket = useOrdersStore((s) => s.setPositionBracket);
   const allOrders = useOrdersStore((s) => s.orders);
   const allPositions = useOrdersStore((s) => s.positions);
-  const bracketRequired = useAccountStore((s) => s.summary?.rule?.stopLossRequired ?? false);
   const theme = useThemeStore((s) => s.theme);
 
   // Resting (working) limit/stop orders for this symbol — drawn on the chart as
@@ -343,15 +384,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
           low: c.low,
           close: c.close,
         }));
-        const volData: HistogramData<UTCTimestamp>[] = candles.map((c) => ({
+        const volDataRaw: HistogramData<UTCTimestamp>[] = candles.map((c) => ({
           time: c.time as UTCTimestamp,
           value: c.volume,
           color: c.close >= c.open ? "#16c78455" : "#ea394355",
         }));
-        candleRef.current.setData(candleData);
+        // Carry the last close forward across short empty stretches so the chart is continuous.
+        const { candles: candleData2, vols: volData } = fillGaps(candleData, volDataRaw, resolution);
+        candleRef.current.setData(candleData2);
         volumeRef.current.setData(volData);
-        barCountRef.current = candleData.length;
-        lastCandleRef.current = candleData[candleData.length - 1] ?? null;
+        barCountRef.current = candleData2.length;
+        lastCandleRef.current = candleData2[candleData2.length - 1] ?? null;
         lastVolumeRef.current = volData[volData.length - 1] ?? null;
         if (showSpinner && !framed) {
           // Frame a readable recent window (deep history stays scrollable to the left)
@@ -361,7 +404,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
           // view pinned to the wrong bars once the full history lands. Re-anchoring to
           // the last N bars keeps the same recent time window (no visible jump). A
           // silent refresh (showSpinner=false) never re-frames — it keeps the user's view.
-          showDefaultView(candleData.length);
+          showDefaultView(candleData2.length); // frame against the actual (gap-filled) series length
+          // Completion check uses REAL bar count (not synthetic fills) so a thin feed still deepens.
           if (candleData.length >= target * 0.9 || candleData.length >= target - 1) framed = true;
         }
       };
@@ -477,6 +521,18 @@ export function CandleChart({ symbol }: { symbol: string }) {
     let next: CandlestickData<UTCTimestamp>;
     let nextVol: HistogramData<UTCTimestamp>;
     if (!last || bucket > (last.time as number)) {
+      // A new bucket opened. If buckets were skipped (no trades), carry the last close
+      // forward as flat bars across the gap — but only short gaps (cap as in fillGaps).
+      if (last) {
+        const missing = (bucket - (last.time as number)) / resolution - 1;
+        if (missing > 0 && missing <= GAP_FILL_MAX_BARS) {
+          for (let k = 1; k <= missing; k++) {
+            const t = (last.time as number) + k * resolution;
+            candleRef.current.update(flatCandle(t, last.close));
+            volumeRef.current?.update({ time: t as UTCTimestamp, value: 0, color: FLAT_VOL_COLOR });
+          }
+        }
+      }
       next = { time: bucket, open: price, high: price, low: price, close: price };
       nextVol = { time: bucket, value: size, color: upColor }; // new bar opens flat → up tone
     } else {
@@ -1003,14 +1059,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
     if (stored != null) applyLine(pc.lineKey, stored);
   }
 
-  // Remove a level: a pending bracket clears that field; an exit leg cancels the order.
-  async function removeLevel(lvl: LevelPos) {
-    const res = lvl.isLeg
-      ? await cancelOrder(lvl.orderId)
-      : await modifyOrder(lvl.orderId, lvl.role === "SL" ? { stopLoss: null } : { takeProfit: null });
-    if (!res.ok) flash(`✗ ${res.error ?? "Remove failed"}`);
-  }
-
   const flash = (msg: string) => {
     setPlaced(msg);
     setTimeout(() => setPlaced(null), 3000);
@@ -1109,10 +1157,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
                 ? `${t.qty} ${t.side === "buy" ? "BUY" : "SELL"} ${t.type.toUpperCase()}`
                 : t.role;
             const stop = (e: React.MouseEvent) => e.stopPropagation();
-            // While in a position, a protective SL/TP leg can be moved (drag) but not
-            // removed when the account requires brackets — so hide its delete control.
-            const isPositionLeg = !isPosition && !isEntry;
-            const lockBracket = isPositionLeg && bracketRequired && allPositions.some((p) => p.symbol === symbol);
             const isPending =
               pendingConfirm != null &&
               ((pendingConfirm.kind === "move" && pendingConfirm.lineKey === t.lineKey) ||
@@ -1169,16 +1213,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
                         +TP
                       </button>
                     )}
-                    {lockBracket ? (
-                      <span title="Required while in a position — drag to move, can't be removed" className="cursor-default text-[10px] leading-none opacity-70">
-                        🔒
-                      </span>
-                    ) : (
+                    {/* Delete control: only on the position (close) and the entry (cancel).
+                        SL/TP lines have no delete — they can be moved by dragging, but a
+                        trader must always keep a stop loss and take profit. */}
+                    {(isPosition || isEntry) && (
                       <button
                         type="button"
-                        title={isPosition ? "Close position" : isEntry ? "Cancel order" : t.isLeg ? "Cancel this leg" : `Remove ${t.role}`}
+                        title={isPosition ? "Close position" : "Cancel order"}
                         onMouseDown={stop}
-                        onClick={() => (isPosition ? closePosition(symbol) : isEntry ? cancelOrder(t.orderId) : removeLevel(t))}
+                        onClick={() => (isPosition ? closePosition(symbol) : cancelOrder(t.orderId))}
                         className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
                       >
                         ✕
