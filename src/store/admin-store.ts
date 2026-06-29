@@ -56,6 +56,8 @@ interface AdminState {
   getTraderDetail: (id: string) => Promise<TraderDetail | null>;
   // --- account actions (operate on an account id) ---
   resetAccount: (accountId: string) => Promise<AdminActionResult>;
+  /** Assign an account size/tier (rule template) to an account; applies the ruleset + resets to that size. */
+  assignTier: (accountId: string, templateId: string) => Promise<AdminActionResult>;
   adjustBalance: (accountId: string, amount: number) => Promise<AdminActionResult>;
   closeAllPositions: (accountId: string) => Promise<AdminActionResult>;
   liquidateAccount: (accountId: string) => Promise<AdminActionResult>;
@@ -276,6 +278,27 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       return r;
     }
     set((s) => ({ accounts: s.accounts.map((a) => (a.id === accountId ? { ...a, status: "active", openPositions: 0 } : a)) }));
+    return { ok: true };
+  },
+
+  assignTier: async (accountId, templateId) => {
+    const token = live();
+    if (token) {
+      const r = await postAction(token, accountId, "assign-tier", { templateId });
+      await get().refresh().catch(() => {});
+      return r;
+    }
+    // Mock: reflect the new tier's size on the account locally.
+    const tpl = get().ruleTemplates.find((t) => t.id === templateId);
+    if (tpl) {
+      set((s) => ({
+        accounts: s.accounts.map((a) =>
+          a.id === accountId
+            ? { ...a, status: "active", openPositions: 0, balance: tpl.accountSize, equity: tpl.accountSize }
+            : a,
+        ),
+      }));
+    }
     return { ok: true };
   },
 

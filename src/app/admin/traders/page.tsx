@@ -27,6 +27,15 @@ const TIER_TONE = { bronze: "neutral", silver: "info", gold: "warning", platinum
 
 const NOW = Date.UTC(2026, 5, 4, 12, 0, 0);
 
+/** Compact label + tone for an assigned account tier (size + phase). */
+function accountTier(size?: number | null, phase?: string | null): { text: string; tone: "long" | "info" | "neutral" } | null {
+  if (size == null) return null;
+  const sizeStr = size >= 1_000_000 ? `$${size / 1_000_000}M` : size >= 1_000 ? `$${size / 1_000}K` : `$${size}`;
+  const ph = phase === "Funded" ? "Funded" : phase === "Challenge Phase 1" ? "P1" : phase === "Challenge Phase 2" ? "P2" : "";
+  const tone = phase === "Funded" ? "long" : "info";
+  return { text: ph ? `${sizeStr} · ${ph}` : sizeStr, tone };
+}
+
 export default function TradersPage() {
   const traders = useAdminStore((s) => s.traders);
   const setStatus = useAdminStore((s) => s.setTraderStatus);
@@ -53,6 +62,15 @@ export default function TradersPage() {
       header: "Tier",
       sortValue: (t) => t.tier,
       cell: (t) => <Badge tone={TIER_TONE[t.tier]}>{t.tier}</Badge>,
+    },
+    {
+      key: "account",
+      header: "Account",
+      sortValue: (t) => t.accountSize ?? 0,
+      cell: (t) => {
+        const at = accountTier(t.accountSize, t.accountPhase);
+        return at ? <Badge tone={at.tone}>{at.text}</Badge> : <span className="text-xs text-muted-2">—</span>;
+      },
     },
     {
       key: "kyc",

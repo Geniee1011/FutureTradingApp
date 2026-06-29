@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAdminStore, type AdminActionResult } from "@/store/admin-store";
-import type { TraderDetail, TraderStatus } from "@/lib/types";
+import type { RuleTemplate, TraderDetail, TraderStatus } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
@@ -44,12 +44,23 @@ function pnlClass(v: number) {
   return v > 0 ? "text-long" : v < 0 ? "text-short" : "text-muted";
 }
 
+/** Compact label + tone for an assigned account tier (size + phase). */
+function tierBadge(tpl?: RuleTemplate): { text: string; tone: "long" | "info" } | null {
+  if (!tpl) return null;
+  const s = tpl.accountSize;
+  const sizeStr = s >= 1_000_000 ? `$${s / 1_000_000}M` : s >= 1_000 ? `$${s / 1_000}K` : `$${s}`;
+  const ph = tpl.phase === "Funded" ? "Funded" : tpl.phase === "Challenge Phase 1" ? "Phase 1" : tpl.phase === "Challenge Phase 2" ? "Phase 2" : "";
+  return { text: ph ? `${sizeStr} · ${ph}` : sizeStr, tone: tpl.phase === "Funded" ? "long" : "info" };
+}
+
 export default function TraderDetailPage() {
   const params = useParams();
   const id = String(params.id);
   const getTraderDetail = useAdminStore((s) => s.getTraderDetail);
   const setTraderStatus = useAdminStore((s) => s.setTraderStatus);
   const resetAccount = useAdminStore((s) => s.resetAccount);
+  const assignTier = useAdminStore((s) => s.assignTier);
+  const getRuleTemplates = useAdminStore((s) => s.getRuleTemplates);
   const adjustBalance = useAdminStore((s) => s.adjustBalance);
   const closeAllPositions = useAdminStore((s) => s.closeAllPositions);
   const liquidateAccount = useAdminStore((s) => s.liquidateAccount);
@@ -62,6 +73,8 @@ export default function TraderDetailPage() {
   const [busy, setBusy] = useState(false);
   const [amount, setAmount] = useState("");
   const [newPw, setNewPw] = useState("");
+  const [tiers, setTiers] = useState<RuleTemplate[]>([]);
+  const [tierId, setTierId] = useState("");
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -70,12 +83,18 @@ export default function TraderDetailPage() {
     useAdminStore.getState().seed();
   }, []);
 
+  // Load the account-tier templates for the assignment dropdown.
+  useEffect(() => {
+    void getRuleTemplates().then(setTiers);
+  }, [getRuleTemplates]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     getTraderDetail(id).then((d) => {
       if (!cancelled) {
         setDetail(d);
+        setTierId(d?.account?.ruleTemplateId ?? "");
         setLoading(false);
       }
     });
@@ -195,6 +214,13 @@ export default function TraderDetailPage() {
           <CardBody className="py-2">
             {account ? (
               <>
+                <KV
+                  label="Account tier"
+                  value={(() => {
+                    const at = tierBadge(tiers.find((t) => t.id === account.ruleTemplateId));
+                    return at ? <Badge tone={at.tone}>{at.text}</Badge> : <span className="text-muted-2">Unassigned</span>;
+                  })()}
+                />
                 <KV label="Currency" value={account.currency} />
                 <KV label="Starting balance" value={formatCurrency(account.startingBalance)} />
                 <KV label="Balance (cash)" value={formatCurrency(account.balance)} />
@@ -240,6 +266,45 @@ export default function TraderDetailPage() {
                 {actionMsg.text}
               </div>
             )}
+
+            {/* Assign account size / tier */}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="w-72">
+                <label className="mb-1 block text-xs text-muted">Account size / type</label>
+                <select
+                  value={tierId}
+                  onChange={(e) => setTierId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-surface px-2 py-2 text-sm text-foreground focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                >
+                  <option value="" disabled>Select a tier…</option>
+                  {tiers.map((t) => (
+                    <option key={t.id} value={t.id}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={actionBusy === "assign-tier"}
+                disabled={!tierId || tierId === account.ruleTemplateId}
+                onClick={() => {
+                  const tier = tiers.find((t) => t.id === tierId);
+                  return runAction(
+                    "assign-tier",
+                    () => assignTier(account.id, tierId),
+                    `Assign the ${tier?.label ?? "selected"} tier to ${trader.name}? This applies that tier's rules and resets the account to its starting balance — open positions and resting orders are cleared. This cannot be undone.`,
+                  );
+                }}
+              >
+                Assign tier
+              </Button>
+              {account.ruleTemplateId && (
+                <span className="pb-2 text-xs text-muted-2">
+                  Current: {tiers.find((t) => t.id === account.ruleTemplateId)?.label ?? account.ruleTemplateId}
+                </span>
+              )}
+            </div>
+
             <div className="flex flex-wrap items-end gap-2">
               <div className="w-44">
                 <label className="mb-1 block text-xs text-muted">Adjust balance (± USD)</label>
@@ -409,6 +474,8 @@ function actionSuccess(key: string, r: AdminActionResult): string {
       return `✓ Liquidated ${r.closed ?? 0} position(s) — account suspended`;
     case "reset":
       return "✓ Challenge reset to starting state";
+    case "assign-tier":
+      return "✓ Account tier assigned — rules applied and balance reset";
     case "password":
       return "✓ Password reset — share the new password with the trader";
     default:

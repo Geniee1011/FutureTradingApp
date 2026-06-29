@@ -114,6 +114,11 @@ export interface EvalRule {
   maxDailyLoss: number;
   maxDrawdown: number;
   maxContracts: number;
+  // Per-trade limits surfaced to the trade ticket (optional: admin views omit them).
+  maxRiskPerTrade?: number;   // max implied SL risk per entry (0 = disabled)
+  maxPositionUnits?: number;  // cross-instrument mini-equivalents (0 = disabled)
+  stopLossRequired?: boolean; // SL + TP mandatory at entry
+  minHoldTimeSecs?: number;   // trade open < this → profit voided
 }
 
 export interface AccountSummary {
@@ -160,6 +165,8 @@ export interface TraderRecord {
   riskScore: number; // 0-100
   lastActive: number;
   createdAt: number;
+  accountSize?: number | null; // assigned rule-tier size ($50K…$1M), null if unassigned
+  accountPhase?: string | null; // 'Challenge Phase 1' | 'Challenge Phase 2' | 'Funded'
 }
 
 export interface AdminAccount {
@@ -245,6 +252,7 @@ export interface TraderDetailAccount {
   highestEquity: number;
   status: string;
   currency: string;
+  ruleTemplateId?: string | null;
   createdAt: number;
 }
 export interface TraderDetailPosition {

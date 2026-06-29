@@ -75,7 +75,10 @@ export function seedAccountSummary(): AccountSummary {
     totalPnl: 1_204.18,
     drawdown: 320.4,
     highestEquity: 51_524.58,
-    rule: { profitTarget: 6_000, maxDailyLoss: 2_500, maxDrawdown: 3_000, maxContracts: 5 },
+    rule: {
+      profitTarget: 6_000, maxDailyLoss: 2_500, maxDrawdown: 3_000, maxContracts: 5,
+      maxRiskPerTrade: 500, maxPositionUnits: 3, stopLossRequired: true, minHoldTimeSecs: 15,
+    },
   };
 }
 

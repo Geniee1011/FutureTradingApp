@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useOrdersStore } from "@/store/orders-store";
 import { useMarketStore } from "@/store/market-store";
+import { useAccountStore } from "@/store/account-store";
 import { getInstrument } from "@/lib/constants";
 import type { OrderType, Side, TimeInForce } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
@@ -15,8 +16,12 @@ interface Suggestion { symbol: string; quantity: number; risk: number }
 export function OrderTicket({ symbol }: { symbol: string }) {
   const placeOrder = useOrdersStore((s) => s.placeOrder);
   const quote = useMarketStore((s) => s.quotes[symbol]);
+  const rule = useAccountStore((s) => s.summary?.rule);
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
+
+  // Per-trade risk cap from the account's rule (0 / undefined = no cap).
+  const maxRiskPerTrade = rule?.maxRiskPerTrade ?? 0;
 
   const [type, setType] = useState<OrderType>("market");
   const [quantity, setQuantity] = useState("");
@@ -67,6 +72,9 @@ export function OrderTicket({ symbol }: { symbol: string }) {
   const riskUsd   = slPriceEff > 0 && refPrice > 0 ? Math.abs(refPrice - slPriceEff) * qtyNum * multiplier : 0;
   const rewardUsd = tpPriceEff > 0 && refPrice > 0 ? Math.abs(tpPriceEff - refPrice) * qtyNum * multiplier : 0;
   const rr = riskUsd > 0 ? rewardUsd / riskUsd : 0;
+
+  // Proactively flag when the order's implied risk exceeds the per-trade cap.
+  const overRisk = maxRiskPerTrade > 0 && riskUsd > maxRiskPerTrade;
 
   function showFeedback(ok: boolean, msg: string) {
     setFeedback({ ok, msg });
@@ -208,6 +216,23 @@ export function OrderTicket({ symbol }: { symbol: string }) {
             <span className="nums text-muted">{rr > 0 ? `1 : ${rr.toFixed(1)}` : "R/R"}</span>
             <span className="text-long">Reward {rewardUsd > 0 ? formatCurrency(rewardUsd) : "—"}</span>
           </div>
+
+          {/* Per-trade risk cap from the account rules — shown so the trader sees the limit
+              before submitting, and turns red when the current order would breach it. */}
+          {maxRiskPerTrade > 0 && (
+            <div
+              className={cn(
+                "flex items-center justify-between rounded-md px-2.5 py-1.5 text-xs",
+                overRisk ? "bg-short/15 text-short" : "bg-surface-3 text-muted",
+              )}
+            >
+              <span>Max risk / trade</span>
+              <span className="nums font-medium">
+                {formatCurrency(maxRiskPerTrade)}
+                {overRisk && " · over limit"}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
