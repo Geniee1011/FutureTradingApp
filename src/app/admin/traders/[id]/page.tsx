@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAdminStore, type AdminActionResult } from "@/store/admin-store";
-import type { RuleTemplate, TraderDetail, TraderStatus } from "@/lib/types";
+import type { RuleTemplate, TraderDetail, TraderDetailOrder, TraderStatus } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
@@ -42,6 +42,36 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
 
 function pnlClass(v: number) {
   return v > 0 ? "text-long" : v < 0 ? "text-short" : "text-muted";
+}
+
+/** Export the orders table to a CSV file and trigger a client-side download. */
+function downloadOrdersCsv(orders: TraderDetailOrder[], who: string): void {
+  const esc = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const head = ["Time", "Symbol", "Side", "Type", "Qty", "Filled", "Requested price", "Fill price", "Status", "Reason"];
+  const rows = orders.map((o) => [
+    new Date(o.createdAt).toISOString(),
+    o.symbol,
+    o.side,
+    o.type,
+    String(o.quantity),
+    String(o.filledQuantity),
+    o.requestedPrice != null ? String(o.requestedPrice) : "",
+    o.fillPrice != null ? String(o.fillPrice) : "",
+    o.status,
+    o.reason ?? "",
+  ]);
+  // Prepend a UTF-8 BOM so Excel opens it with the correct encoding.
+  const csv = "﻿" + [head, ...rows].map((r) => r.map(esc).join(",")).join("\r\n");
+  const safe = who.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "trader";
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `orders-${safe}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /** Compact label + tone for an assigned account tier (size + phase). */
@@ -397,7 +427,18 @@ export default function TraderDetailPage() {
       </Section>
 
       {/* Orders */}
-      <Section title="Recent orders" count={orders.length} className="mt-4">
+      <Section
+        title="Recent orders"
+        count={orders.length}
+        className="mt-4"
+        action={
+          orders.length > 0 ? (
+            <Button variant="secondary" size="sm" onClick={() => downloadOrdersCsv(orders, trader.name)}>
+              Download CSV
+            </Button>
+          ) : undefined
+        }
+      >
         {orders.length ? (
           <Table head={["Time", "Symbol", "Side", "Type", "Qty", "Price", "Status"]}>
             {orders.map((o) => (
@@ -489,10 +530,10 @@ function mapAccountStatus(s: string): TraderStatus {
   return "active";
 }
 
-function Section({ title, count, className, children }: { title: string; count: number; className?: string; children: React.ReactNode }) {
+function Section({ title, count, className, children, action }: { title: string; count: number; className?: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <Card className={cn("overflow-hidden", className)}>
-      <CardHeader title={<span className="flex items-center gap-2">{title}<span className="text-xs font-normal text-muted">({count})</span></span>} />
+      <CardHeader title={<span className="flex items-center gap-2">{title}<span className="text-xs font-normal text-muted">({count})</span></span>} action={action} />
       {children}
     </Card>
   );

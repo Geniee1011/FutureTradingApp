@@ -91,5 +91,24 @@ export function TraderProvider({ children }: { children: React.ReactNode }) {
     };
   }, [token]);
 
+  // Re-sync the book on tab refocus and on a slow interval. While the laptop is asleep or
+  // the tab is hidden the WS drops, so a server-side close that happened while you were
+  // away (a TP/SL bracket filling, a liquidation) is never pushed — leaving the now-closed
+  // trade's TP/SL lines stranded on the chart. Re-pulling positions + orders reconciles the
+  // book (and its bracket lines) with the server's truth on return. Live backend only.
+  useEffect(() => {
+    if (USE_MOCK_FEED || !token) return;
+    const sync = () => {
+      if (document.visibilityState === "visible") void useOrdersStore.getState().refresh();
+    };
+    document.addEventListener("visibilitychange", sync);
+    const id = setInterval(sync, 30_000);
+    sync(); // reconcile immediately on mount too
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      clearInterval(id);
+    };
+  }, [token]);
+
   return <>{children}</>;
 }
