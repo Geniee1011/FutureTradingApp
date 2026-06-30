@@ -71,7 +71,6 @@ export function UserMenu() {
             ) : (
               <MenuLink href="/account" label="Account settings" icon="account" />
             )}
-            {user.role === "admin" && <MenuLink href="/dashboard" label="Trader portal" icon="dashboard" />}
             {byo && user.role === "admin" && (
               <button
                 onClick={() => {

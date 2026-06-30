@@ -44,15 +44,6 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="border-t border-border p-3">
-          <Link
-            href="/dashboard"
-            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted hover:bg-surface-2 hover:text-foreground"
-          >
-            <Icon name="dashboard" width={18} height={18} />
-            Trader portal
-          </Link>
-        </div>
       </aside>
 
       {/* Main column */}

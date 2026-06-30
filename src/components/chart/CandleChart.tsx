@@ -61,7 +61,9 @@ const DEFAULT_VISIBLE_BARS = 480;
 // illiquidity gaps — long breaks (session/maintenance/weekend) stay as real gaps
 // rather than drawing a long flat line across them. 30 bars = 30 min at 1m.
 const GAP_FILL_MAX_BARS = 30;
-const FLAT_VOL_COLOR = "#8b95a755"; // muted — filled bars carry 0 volume anyway
+// Flat carry-forward fill bars reuse the muted volume color; the candle itself uses the
+// default series styling so the fill blends into the chart instead of standing out.
+const FLAT_VOL_COLOR = "#8b95a755";
 
 /** A flat carry-forward candle at `close`, for an empty bucket at `time` (epoch seconds). */
 function flatCandle(time: number, close: number): CandlestickData<UTCTimestamp> {
@@ -78,14 +80,9 @@ function fillGaps(
   vols: HistogramData<UTCTimestamp>[],
   resolutionSec: number,
 ): { candles: CandlestickData<UTCTimestamp>[]; vols: HistogramData<UTCTimestamp>[] } {
-  if (candles.length < 2) {
-    console.log(`[gap-fill] history load: ${candles.length} bars, too few to scan`);
-    return { candles, vols };
-  }
+  if (candles.length < 2) return { candles, vols };
   const outC: CandlestickData<UTCTimestamp>[] = [];
   const outV: HistogramData<UTCTimestamp>[] = [];
-  const filled: number[] = []; // gap sizes we filled
-  const skipped: number[] = []; // gap sizes too big to fill (> cap)
   for (let i = 0; i < candles.length; i++) {
     outC.push(candles[i]!);
     outV.push(vols[i]!);
@@ -94,21 +91,14 @@ function fillGaps(
     if (!nxt) break;
     const missing = (Number(nxt.time) - Number(cur.time)) / resolutionSec - 1;
     if (missing > 0 && missing <= GAP_FILL_MAX_BARS) {
-      filled.push(missing);
       for (let k = 1; k <= missing; k++) {
         const t = Number(cur.time) + k * resolutionSec;
         outC.push(flatCandle(t, cur.close));
         outV.push({ time: t as UTCTimestamp, value: 0, color: FLAT_VOL_COLOR });
       }
-    } else if (missing > GAP_FILL_MAX_BARS) {
-      skipped.push(missing);
     }
+    // Gaps wider than the cap (session/maintenance/weekend breaks) are left as real gaps.
   }
-  // DIAGNOSTIC (temporary): shows whether gap-fill ran, gaps found, and what was filled/skipped.
-  console.log(
-    `[gap-fill] history load: res=${resolutionSec}s, in=${candles.length} → out=${outC.length} bars` +
-      `, filled gaps=[${filled.join(",")}], skipped (>${GAP_FILL_MAX_BARS})=[${skipped.join(",")}]`,
-  );
   return { candles: outC, vols: outV };
 }
 
@@ -538,10 +528,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
       // forward as flat bars across the gap — but only short gaps (cap as in fillGaps).
       if (last) {
         const missing = (bucket - (last.time as number)) / resolution - 1;
-        if (missing > 0) {
-          // DIAGNOSTIC (temporary): a live gap opened — log its size and whether we fill it.
-          console.log(`[gap-fill] live: new bucket, gap=${missing} bars, ${missing <= GAP_FILL_MAX_BARS ? "filling" : "SKIP (>cap)"}`);
-        }
         if (missing > 0 && missing <= GAP_FILL_MAX_BARS) {
           for (let k = 1; k <= missing; k++) {
             const t = (last.time as number) + k * resolution;
@@ -1238,7 +1224,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
                         type="button"
                         title={isPosition ? "Close position" : "Cancel order"}
                         onMouseDown={stop}
-                        onClick={() => (isPosition ? closePosition(symbol) : cancelOrder(t.orderId))}
+                        onClick={async () => {
+                          // Await the result and surface failures — previously this was
+                          // fire-and-forget, so a rejected close/cancel (401, market closed,
+                          // no open position) silently did nothing.
+                          const res = isPosition ? await closePosition(symbol) : await cancelOrder(t.orderId);
+                          if (!res?.ok) {
+                            flash(`✗ ${res?.error ?? (isPosition ? "Could not close position" : "Could not cancel order")}`);
+                          } else {
+                            flash(isPosition ? "✓ Position closed" : "✓ Order cancelled");
+                          }
+                        }}
                         className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
                       >
                         ✕

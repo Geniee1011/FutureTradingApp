@@ -2,10 +2,12 @@ import { AuthGuard } from "@/components/auth/AuthGuard";
 import { TraderProvider } from "@/components/providers/TraderProvider";
 import { TopNav } from "@/components/layout/TopNav";
 
-/** Shared chrome for the trader portal (any authenticated user). */
+/** Shared chrome for the trader portal. Traders only — admins are bounced to the
+ *  Admin CRM. (Admin users have no trading account, so the portal would 401 on
+ *  every API call and fall back to demo data; keeping the areas separate avoids that.) */
 export default function TraderLayout({ children }: { children: React.ReactNode }) {
   return (
-    <AuthGuard>
+    <AuthGuard role="trader">
       <TraderProvider>
         <div className="min-h-screen bg-background">
           <TopNav />

@@ -70,12 +70,20 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
     if (get().seeded) return;
     set({ seeded: true });
 
-    const loadMock = () => set({ orders: seedOrders(), positions: seedPositions() });
     const token = getAuthToken();
 
-    // No backend or no session → demo data.
-    if (USE_MOCK_FEED || !API_BASE || !token) {
-      loadMock();
+    // No backend configured at all → deterministic demo data (the standalone mock experience).
+    if (USE_MOCK_FEED) {
+      set({ orders: seedOrders(), positions: seedPositions() });
+      return;
+    }
+
+    // A backend IS configured. NEVER fabricate positions from here on: if we can't load the
+    // real book (missing token, 401, network error) we show an EMPTY book, not demo trades.
+    // Injecting seedPositions() on failure previously surfaced phantom positions (e.g. a
+    // "3 SHORT" the backend never had) that ticked PnL live yet could not be closed.
+    if (!API_BASE || !token) {
+      set({ orders: [], positions: [] });
       return;
     }
 
@@ -90,10 +98,13 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         if (pRes.ok && oRes.ok) {
           set({ positions: (await pRes.json()) as Position[], orders: (await oRes.json()) as Order[] });
         } else {
-          loadMock();
+          // Auth/server failure (e.g. token's user has no account → 401). Show an empty
+          // book rather than fake positions the user can't act on.
+          set({ orders: [], positions: [] });
         }
       } catch {
-        loadMock();
+        // Network error — keep the book empty instead of fabricating demo positions.
+        set({ orders: [], positions: [] });
       }
     })();
   },
