@@ -271,34 +271,37 @@ export function OrderTicket({ symbol }: { symbol: string }) {
         </div>
       </div>
 
-      {/* Max-risk-per-trade suggestion dialog — replaces the error banner when a
-          micro alternative is available. Two-button: place micros or cancel. */}
+      {/* Max-risk-per-trade suggestion — pinned to the TOP of the page as a fixed banner
+          (centered, above the content) so it can't be missed, instead of tucked beside the
+          order buttons. Two-button: place the suggested micros or cancel. */}
       {pendingSuggestion && (
-        <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-3 text-xs">
-          <p className="mb-2 font-medium text-warning">{pendingSuggestion.msg}</p>
-          <p className="mb-3 text-muted">
-            Suggested alternative: {pendingSuggestion.suggestion.quantity} {pendingSuggestion.suggestion.symbol} micros
-            (risk {formatCurrency(pendingSuggestion.suggestion.risk)})
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => {
-                const { suggestion, side } = pendingSuggestion;
-                void sendOrder(side, suggestion.symbol, suggestion.quantity);
-              }}
-              className="rounded-md bg-primary px-3 py-1.5 font-semibold text-white hover:brightness-110 disabled:opacity-50"
-            >
-              Place {pendingSuggestion.suggestion.quantity} {pendingSuggestion.suggestion.symbol} micros
-            </button>
-            <button
-              type="button"
-              onClick={() => setPendingSuggestion(null)}
-              className="rounded-md border border-border px-3 py-1.5 text-muted hover:text-foreground"
-            >
-              Cancel
-            </button>
+        <div className="fixed inset-x-0 top-28 z-50 flex justify-center px-4">
+          <div className="w-full max-w-md rounded-lg border border-warning/50 bg-surface-2 px-4 py-3 text-xs shadow-2xl">
+            <p className="mb-2 font-medium text-warning">{pendingSuggestion.msg}</p>
+            <p className="mb-3 text-muted">
+              Suggested alternative: {pendingSuggestion.suggestion.quantity} {pendingSuggestion.suggestion.symbol} micros
+              (risk {formatCurrency(pendingSuggestion.suggestion.risk)})
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  const { suggestion, side } = pendingSuggestion;
+                  void sendOrder(side, suggestion.symbol, suggestion.quantity);
+                }}
+                className="rounded-md bg-primary px-3 py-1.5 font-semibold text-white hover:brightness-110 disabled:opacity-50"
+              >
+                Place {pendingSuggestion.suggestion.quantity} {pendingSuggestion.suggestion.symbol} micros
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingSuggestion(null)}
+                className="rounded-md border border-border px-3 py-1.5 text-muted hover:text-foreground"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
