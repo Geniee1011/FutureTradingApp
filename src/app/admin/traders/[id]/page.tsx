@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAdminStore, type AdminActionResult } from "@/store/admin-store";
+import { useAuthStore } from "@/store/auth-store";
+import { getWsClient } from "@/lib/ws-client";
+import { USE_MOCK_FEED } from "@/lib/constants";
 import type { RuleTemplate, TraderDetail, TraderDetailOrder, TraderStatus } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
@@ -97,6 +100,7 @@ export default function TraderDetailPage() {
   const cancelOrders = useAdminStore((s) => s.cancelOrders);
   const resetPassword = useAdminStore((s) => s.resetPassword);
   const seeded = useAdminStore((s) => s.seeded);
+  const token = useAuthStore((s) => s.token);
 
   const [detail, setDetail] = useState<TraderDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,6 +136,57 @@ export default function TraderDetailPage() {
       cancelled = true;
     };
   }, [id, getTraderDetail, seeded]);
+
+  // Silent re-pull of this trader's detail (no spinner, never touches tierId so it can't
+  // disturb an in-progress tier selection). Used by both the live push and the fallback poll.
+  const refreshDetail = async () => {
+    const d = await getTraderDetail(id);
+    if (d) setDetail(d);
+  };
+
+  // Keep the viewed account id in a ref so the WS handler can filter pushes without
+  // re-subscribing every time the detail re-loads.
+  const accountIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    accountIdRef.current = detail?.account?.id ?? null;
+  }, [detail]);
+
+  // INSTANT live refresh over WebSocket: when a trader changes their book (e.g. drags an
+  // SL/TP on the chart), the engine pushes an `admin_update` ({kind:"trade_activity",
+  // accountId}) to admin subscribers. We refetch the moment it arrives for THIS trader —
+  // no 5s lag. (A slow fallback poll below covers a missed push / dropped socket.)
+  useEffect(() => {
+    if (USE_MOCK_FEED || !token) return;
+    const ws = getWsClient();
+    ws.connect();
+    ws.authenticate(token);
+    ws.subscribe("admin-updates");
+    const off = ws.onMessage((msg) => {
+      if (msg.type !== "admin_update") return;
+      const ev = msg.event as { accountId?: string } | null;
+      if (ev?.accountId && ev.accountId === accountIdRef.current) void refreshDetail();
+    });
+    return () => {
+      off();
+      ws.unsubscribe("admin-updates");
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, token]);
+
+  // Fallback poll: a safety net in case a push is missed or the socket drops. Slow (15s),
+  // silent, and paused while the tab is hidden.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void refreshDetail();
+    };
+    const interval = setInterval(tick, 15000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", tick);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, getTraderDetail]);
 
   async function toggleStatus() {
     if (!detail) return;
