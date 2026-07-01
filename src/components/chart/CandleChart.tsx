@@ -23,7 +23,7 @@ import { useThemeStore } from "@/store/theme-store";
 import { getChartColors } from "@/lib/chart-theme";
 import { getInstrument } from "@/lib/constants";
 import type { Order, OrderType, Side } from "@/lib/types";
-import { formatPrice, cn } from "@/lib/utils";
+import { formatPrice, formatCurrency, cn } from "@/lib/utils";
 
 const RESOLUTIONS = [
   { label: "1m", seconds: 60 },
@@ -178,13 +178,24 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [resolution, setResolution] = useState(60);
   const [loading, setLoading] = useState(true);
   const [ticket, setTicket] = useState<ChartTicket | null>(null);
-  const [dragDelta, setDragDelta] = useState({ x: 0, y: 0 }); // ticket drag offset from its anchor
   const [qty, setQty] = useState(1);
+  const [ticketSide, setTicketSide] = useState<Side>("buy"); // TradingView-style entry direction toggle
   const [slInput, setSlInput] = useState("");
   const [tpInput, setTpInput] = useState("");
   const [placed, setPlaced] = useState<string | null>(null);
   const [levels, setLevels] = useState<LevelPos[]>([]);
   const [zones, setZones] = useState<ZonePos[]>([]);
+  // Inline pending-order ticket levels (entry pill + draggable SL/TP badges), positioned on the
+  // chart by an rAF loop so they track the price as it scrolls/rescales. `qtyOpen` = the qty popover.
+  const [ticketLevels, setTicketLevels] = useState<{
+    entryY: number | null;
+    sl: { y: number; usd: number } | null;
+    tp: { y: number; usd: number } | null;
+    right: number;
+  }>({ entryY: null, sl: null, tp: null, right: 60 });
+  const [qtyOpen, setQtyOpen] = useState(false);
+  // Inline resize editor for a working (unfilled) order — click the order pill's qty to open.
+  const [orderQtyEdit, setOrderQtyEdit] = useState<{ id: string; value: number } | null>(null);
   const [pendingConfirm, setPendingConfirmState] = useState<PendingConfirm | null>(null);
   const setPending = (pc: PendingConfirm | null) => {
     pendingConfirmRef.current = pc; // keep the rAF-readable ref in sync with state
@@ -193,12 +204,22 @@ export function CandleChart({ symbol }: { symbol: string }) {
   // Order labels dismissed from the chart (hidden ONLY — the orders stay active).
   // Seeded from localStorage so dismissals survive a page refresh.
 
-  // Clear the bracket inputs whenever the ticket closes.
+  // Seed defaults when the ticket opens (bracket ticks so the draggable SL/TP handles show
+  // up right away; direction from where the level sits vs the market — below = buy limit,
+  // above = sell limit, TradingView-style); clear them when it closes.
   useEffect(() => {
-    if (!ticket) {
+    if (ticket) {
+      setSlInput("10");
+      setTpInput("20");
+      setQty(1);
+      const mkt = quote?.price ?? lastCandleRef.current?.close ?? 0;
+      setTicketSide(mkt > 0 && ticket.price >= mkt ? "sell" : "buy");
+    } else {
       setSlInput("");
       setTpInput("");
+      setQtyOpen(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket]);
 
   const placeOrder = useOrdersStore((s) => s.placeOrder);
@@ -290,7 +311,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
       if (!param.point || !candleRef.current) return;
       const price = candleRef.current.coordinateToPrice(param.point.y);
       if (price == null) return;
-      setDragDelta({ x: 0, y: 0 }); // re-anchor each new ticket at the click point
       setTicket({ x: param.point.x, y: param.point.y, price: price as number });
     });
 
@@ -567,7 +587,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
     if (ticket) {
       priceLineRef.current = series.createPriceLine({
         price: round(ticket.price),
-        color: "#7c9cff",
+        color: "#3b82f6",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
@@ -577,9 +597,15 @@ export function CandleChart({ symbol }: { symbol: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticket]);
 
-  // Draw SL (red) / TP (green) preview lines from the tick inputs, anchored to the
-  // clicked entry. Shown in the long orientation (SL below / TP above) so the
-  // trader sees both levels live as they type; they flip naturally on a sell.
+  // Which side of the entry each bracket sits on, per the chosen direction (buy → SL below /
+  // TP above; sell → reversed). Declared here so the preview-line + drag-handle effects below
+  // can use it. Depends only on ticketSide, so it's a plain derived value.
+  const slDir = ticketSide === "buy" ? -1 : 1;
+  const tpDir = -slDir;
+
+  // Draw SL (red) / TP (green) preview lines from the tick inputs, anchored to the clicked
+  // entry and oriented to the chosen direction (buy → SL below / TP above; sell → reversed),
+  // so the trader sees both levels live as they type or drag.
   useEffect(() => {
     const series = candleRef.current;
     if (!series) return;
@@ -596,7 +622,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const tpT = parseFloat(tpInput) || 0;
     if (slT > 0) {
       slLineRef.current = series.createPriceLine({
-        price: round(ticket.price - slT * tickSize),
+        price: round(ticket.price + slDir * slT * tickSize),
         color: "#ea3943",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
@@ -606,7 +632,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
     }
     if (tpT > 0) {
       tpLineRef.current = series.createPriceLine({
-        price: round(ticket.price + tpT * tickSize),
+        price: round(ticket.price + tpDir * tpT * tickSize),
         color: "#16c784",
         lineWidth: 1,
         lineStyle: LineStyle.Dashed,
@@ -615,7 +641,74 @@ export function CandleChart({ symbol }: { symbol: string }) {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticket, slInput, tpInput, tickSize]);
+  }, [ticket, slInput, tpInput, tickSize, slDir, tpDir]);
+
+  // Position the inline ticket (entry pill on its line + SL/TP badges on theirs) via an rAF loop
+  // so they track the price as the chart scrolls/rescales. Scoped to when the ticket is open.
+  useEffect(() => {
+    if (!ticket) {
+      setTicketLevels({ entryY: null, sl: null, tp: null, right: 60 });
+      return;
+    }
+    let raf = 0;
+    let last = "";
+    const update = () => {
+      const series = candleRef.current;
+      if (series) {
+        const right = Math.round(chartRef.current?.priceScale("right").width() ?? 56) + 4;
+        const yOf = (price: number) => {
+          const c = series.priceToCoordinate(price);
+          return c != null ? (c as number) : null;
+        };
+        const usdOf = (ticks: number) => ticks * tickSize * qty * multiplier;
+        const slT = parseFloat(slInput) || 0;
+        const tpT = parseFloat(tpInput) || 0;
+        const entryY = yOf(ticket.price);
+        const slY = slT > 0 ? yOf(round(ticket.price + slDir * slT * tickSize)) : null;
+        const tpY = tpT > 0 ? yOf(round(ticket.price + tpDir * tpT * tickSize)) : null;
+        const next = {
+          entryY,
+          sl: slY != null ? { y: slY, usd: usdOf(slT) } : null,
+          tp: tpY != null ? { y: tpY, usd: usdOf(tpT) } : null,
+          right,
+        };
+        const key = `${Math.round(entryY ?? -1)}|${next.sl ? `${Math.round(next.sl.y)}:${Math.round(next.sl.usd)}` : "-"}|${next.tp ? `${Math.round(next.tp.y)}:${Math.round(next.tp.usd)}` : "-"}|${right}`;
+        if (key !== last) {
+          last = key;
+          setTicketLevels(next);
+        }
+      }
+      raf = requestAnimationFrame(update);
+    };
+    raf = requestAnimationFrame(update);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket, slInput, tpInput, qty, tickSize, multiplier, slDir, tpDir]);
+
+  // Drag a ticket SL/TP handle up/down → set the tick distance from the entry. Updates
+  // slInput/tpInput, so the preview line, the $ readout, and the handle all follow live.
+  function startTicketLevelDrag(e: React.MouseEvent, role: "SL" | "TP") {
+    e.preventDefault();
+    e.stopPropagation();
+    const series = candleRef.current;
+    const container = containerRef.current;
+    if (!series || !container || !ticket) return;
+    const entry = ticket.price;
+    const onMove = (ev: MouseEvent) => {
+      const raw = series.coordinateToPrice(ev.clientY - container.getBoundingClientRect().top);
+      if (raw == null) return;
+      // Distance from the entry in ticks (SL sits below, TP above; the sign is fixed by role).
+      const ticks = Math.max(1, Math.round(Math.abs((raw as number) - entry) / tickSize));
+      if (role === "SL") setSlInput(String(ticks));
+      else setTpInput(String(ticks));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   // Draw a dashed price line per working order (green buy / red sell), with the
   // price on the axis. Re-created when the order set or any price changes.
@@ -634,10 +727,10 @@ export function CandleChart({ symbol }: { symbol: string }) {
           price: o.price as number,
           // Neutral blue for the entry — distinct from the green TP and red SL (and the
           // green last-price marker). Buy/sell is conveyed by the pill's BUY/SELL label.
-          color: "#7c9cff",
+          color: "#3b82f6",
           lineWidth: 1,
           lineStyle: LineStyle.Dashed,
-          axisLabelVisible: false, // the draggable pill carries the price label
+          axisLabelVisible: true, // price on the axis (TradingView-style); the pill stays clean
         }),
       );
       // A working bracket entry carries its SL/TP until it fills (only then do the
@@ -668,7 +761,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
       seen.add(posKey);
       lines.set(
         posKey,
-        series.createPriceLine({ price: position.avgPrice, color: "#7c9cff", lineWidth: 2, lineStyle: LineStyle.Solid, axisLabelVisible: false }),
+        series.createPriceLine({ price: position.avgPrice, color: "#3b82f6", lineWidth: 2, lineStyle: LineStyle.Solid, axisLabelVisible: false }),
       );
     }
     // Remove lines for orders/positions that closed (no line / no axis label).
@@ -831,6 +924,14 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const isAbove = ticketPrice >= market;
   const sellType: OrderType = isAbove ? "limit" : "stop";
   const buyType: OrderType = isAbove ? "stop" : "limit";
+  // The order type for the chosen direction (buyType/sellType depend on the click vs market).
+  const ticketType: OrderType = ticketSide === "buy" ? buyType : sellType;
+
+  // Dollar risk / reward for the ticket's SL/TP tick inputs. Pure tick distance × qty ×
+  // contract multiplier, so it's independent of the entry price (limit/stop/market all match).
+  const ticketRisk = (parseFloat(slInput) || 0) * tickSize * qty * multiplier;
+  const ticketReward = (parseFloat(tpInput) || 0) * tickSize * qty * multiplier;
+  const ticketRR = ticketRisk > 0 ? ticketReward / ticketRisk : 0;
 
   async function submit(side: Side, asMarket = false) {
     if (!ticket) return;
@@ -878,25 +979,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
     showDefaultView(barCountRef.current);
   };
 
-  // Flip the popup to the left when clicking near the right edge.
-  const flip = ticket && containerRef.current ? ticket.x > containerRef.current.clientWidth * 0.62 : false;
-
-  // Drag the ticket by its header so it can be moved off the price action.
-  function startTicketDrag(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const base = dragDelta;
-    const onMove = (ev: MouseEvent) => setDragDelta({ x: base.x + (ev.clientX - startX), y: base.y + (ev.clientY - startY) });
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  }
-
   // Move a working order's lightweight-charts line live during a drag.
   const applyLine = (lineKey: string, price: number) => {
     orderLinesRef.current.get(lineKey)?.applyOptions({ price });
@@ -906,7 +988,6 @@ export function CandleChart({ symbol }: { symbol: string }) {
   // Drag a level (entry / SL / TP) directly on the chart. No confirmation — the drop
   // persists via modifyOrder. Entry, SL and TP each drag INDEPENDENTLY (moving the entry
   // does not drag the bracket). Filled-position exit legs drag via their own price.
-  // Mirrors the startTicketDrag closure pattern.
   function startLevelDrag(e: React.MouseEvent, lvl: LevelPos) {
     e.preventDefault();
     e.stopPropagation();
@@ -1153,7 +1234,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
             const hasTp = isPosition ? visibleOrders.some((x) => x.bracketRole === "TP") : o?.tpPrice != null && o.tpPrice > 0;
             // Position entry + working entry = neutral blue (distinct from green TP / red SL
             // / green price marker); SL = red, TP = green.
-            const tone = isEntry ? "bg-[#7c9cff] text-black" : t.role === "SL" ? "bg-short/90 text-white" : "bg-long/90 text-black";
+            const tone = isEntry ? "bg-[#3b82f6] text-white" : t.role === "SL" ? "bg-short/90 text-white" : "bg-long/90 text-black";
             const label = isPosition
               ? `${t.qty} ${t.side === "buy" ? "LONG" : "SHORT"}`
               : isEntry
@@ -1168,173 +1249,352 @@ export function CandleChart({ symbol }: { symbol: string }) {
             // Live unrealised P&L for an open position (updates every quote tick — the
             // component re-renders on the quote selector). The entry price moves to the title.
             const posPnl = isPosition ? (market - t.price) * (t.side === "buy" ? 1 : -1) * t.qty * multiplier : 0;
+            // TradingView-style working-order entry: quick-add TP/SL pills to the LEFT of a
+            // segmented [ qty · Buy/Sell Type · × ] pill. Position + SL/TP legs + a mid-drag
+            // entry (pending ✓/✗) keep the single-pill look.
+            const tvEntry = isEntry && !isPending;
             return (
               <div
                 key={t.lineKey}
                 style={{ top: t.y, right: t.right }}
-                onMouseDown={canDrag ? (e) => startLevelDrag(e, t) : undefined}
-                title={canDrag ? "Drag to move" : isPosition ? `Entry ${formatPrice(t.price, precision)}` : undefined}
-                className={cn(
-                  "pointer-events-auto absolute z-20 flex -translate-y-1/2 select-none items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
-                  canDrag ? "cursor-ns-resize" : "cursor-default",
-                  isPending && "ring-2 ring-white/70",
-                  tone,
-                )}
+                className="pointer-events-none absolute z-20 flex -translate-y-1/2 items-center gap-1"
               >
-                <span>{label}</span>
-                {isPosition ? (
-                  <span
-                    className={cn(
-                      "nums rounded px-1 font-semibold",
-                      posPnl >= 0 ? "bg-long/90 text-black" : "bg-short/90 text-white",
-                    )}
+                {/* Quick-add bracket pills (drag onto the chart to place the level). */}
+                {tvEntry && !hasTp && (
+                  <button
+                    type="button"
+                    title="Drag to add take profit"
+                    onMouseDown={(e) => startAddBracketDrag(e, t, "TP")}
+                    className="pointer-events-auto cursor-ns-resize select-none rounded border border-long/70 bg-surface-2/90 px-1.5 py-0.5 text-[10px] font-semibold text-long shadow hover:bg-long/20"
                   >
-                    {posPnl >= 0 ? "+" : "−"}
-                    {Math.abs(posPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
-                  </span>
-                ) : (
-                  <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
+                    TP
+                  </button>
                 )}
-                {isPending ? (
-                  <>
-                    <button type="button" title="Confirm" onMouseDown={stop} onClick={confirmPending} className="inline-block rounded bg-black/25 px-1 leading-none transition-transform duration-150 hover:scale-125 hover:bg-black/45">
-                      ✓
-                    </button>
-                    <button type="button" title="Cancel" onMouseDown={stop} onClick={cancelPending} className="inline-block rounded bg-black/25 px-1 leading-none transition-transform duration-150 hover:scale-125 hover:bg-black/45">
-                      ✕
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {isEntry && !hasSl && (
-                      <button type="button" title="Drag to add stop loss" onMouseDown={(e) => startAddBracketDrag(e, t, "SL")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
-                        +SL
-                      </button>
-                    )}
-                    {isEntry && !hasTp && (
-                      <button type="button" title="Drag to add take profit" onMouseDown={(e) => startAddBracketDrag(e, t, "TP")} className="cursor-ns-resize rounded bg-black/20 px-1 leading-none hover:bg-black/35">
-                        +TP
-                      </button>
-                    )}
-                    {/* Delete control: only on the position (close) and the entry (cancel).
-                        SL/TP lines have no delete — they can be moved by dragging, but a
-                        trader must always keep a stop loss and take profit. */}
-                    {(isPosition || isEntry) && (
+                {tvEntry && !hasSl && (
+                  <button
+                    type="button"
+                    title="Drag to add stop loss"
+                    onMouseDown={(e) => startAddBracketDrag(e, t, "SL")}
+                    className="pointer-events-auto cursor-ns-resize select-none rounded border border-short/70 bg-surface-2/90 px-1.5 py-0.5 text-[10px] font-semibold text-short shadow hover:bg-short/20"
+                  >
+                    SL
+                  </button>
+                )}
+                {/* Main pill (draggable). */}
+                <div
+                  onMouseDown={canDrag ? (e) => startLevelDrag(e, t) : undefined}
+                  title={canDrag ? "Drag to move" : isPosition ? `Entry ${formatPrice(t.price, precision)}` : undefined}
+                  className={cn(
+                    "pointer-events-auto flex select-none items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                    canDrag ? "cursor-ns-resize" : "cursor-default",
+                    isPending && "ring-2 ring-white/70",
+                    tone,
+                  )}
+                >
+                  {tvEntry ? (
+                    <>
                       <button
                         type="button"
-                        title={isPosition ? "Close position" : "Cancel order"}
+                        title="Change quantity"
+                        onMouseDown={stop}
+                        onClick={() => setOrderQtyEdit((cur) => (cur?.id === t.orderId ? null : { id: t.orderId, value: t.qty }))}
+                        className="nums rounded bg-black/20 px-1 leading-none hover:bg-black/35"
+                      >
+                        {t.qty}
+                      </button>
+                      <span>{`${t.side === "buy" ? "Buy" : "Sell"} ${t.type.charAt(0).toUpperCase()}${t.type.slice(1)}`}</span>
+                      <span className="mx-0.5 h-3 w-px bg-white/30" />
+                      <button
+                        type="button"
+                        title="Cancel order"
                         onMouseDown={stop}
                         onClick={async () => {
-                          // Await the result and surface failures — previously this was
-                          // fire-and-forget, so a rejected close/cancel (401, market closed,
-                          // no open position) silently did nothing.
-                          const res = isPosition ? await closePosition(symbol) : await cancelOrder(t.orderId);
-                          if (!res?.ok) {
-                            flash(`✗ ${res?.error ?? (isPosition ? "Could not close position" : "Could not cancel order")}`);
-                          } else {
-                            flash(isPosition ? "✓ Position closed" : "✓ Order cancelled");
-                          }
+                          const res = await cancelOrder(t.orderId);
+                          if (!res?.ok) flash(`✗ ${res?.error ?? "Could not cancel order"}`);
+                          else flash("✓ Order cancelled");
                         }}
-                        className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
+                        className="leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-125 hover:opacity-100 active:scale-95"
                       >
                         ✕
                       </button>
-                    )}
-                  </>
+                    </>
+                  ) : (
+                    <>
+                      <span>{label}</span>
+                      {isPosition ? (
+                        <span
+                          className={cn(
+                            "nums rounded px-1 font-semibold",
+                            posPnl >= 0 ? "bg-long/90 text-black" : "bg-short/90 text-white",
+                          )}
+                        >
+                          {posPnl >= 0 ? "+" : "−"}
+                          {Math.abs(posPnl).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                        </span>
+                      ) : (
+                        <span className="nums opacity-90">{formatPrice(t.price, precision)}</span>
+                      )}
+                      {isPending ? (
+                        <>
+                          <button type="button" title="Confirm" onMouseDown={stop} onClick={confirmPending} className="inline-block rounded bg-black/25 px-1 leading-none transition-transform duration-150 hover:scale-125 hover:bg-black/45">
+                            ✓
+                          </button>
+                          <button type="button" title="Cancel" onMouseDown={stop} onClick={cancelPending} className="inline-block rounded bg-black/25 px-1 leading-none transition-transform duration-150 hover:scale-125 hover:bg-black/45">
+                            ✕
+                          </button>
+                        </>
+                      ) : (
+                        isPosition && (
+                          <button
+                            type="button"
+                            title="Close position"
+                            onMouseDown={stop}
+                            onClick={async () => {
+                              // Await the result and surface failures — a rejected close (401,
+                              // market closed, no open position) must not fail silently.
+                              const res = await closePosition(symbol);
+                              if (!res?.ok) {
+                                flash(`✗ ${res?.error ?? "Could not close position"}`);
+                              } else {
+                                flash("✓ Position closed");
+                              }
+                            }}
+                            className="inline-block text-[11px] leading-none opacity-80 transition-transform duration-150 ease-out hover:scale-150 hover:rotate-90 hover:opacity-100 active:scale-95"
+                          >
+                            ✕
+                          </button>
+                        )
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Resize a working order before it fills — opens on the qty click above. */}
+                {tvEntry && orderQtyEdit?.id === t.orderId && (
+                  <div
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="pointer-events-auto absolute right-0 top-full z-40 mt-1 w-40 rounded-lg border border-border-strong bg-surface-2/95 p-2 shadow-2xl backdrop-blur"
+                  >
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-[11px] text-muted">Quantity</span>
+                      <button onClick={() => setOrderQtyEdit(null)} aria-label="Close" className="flex h-4 w-4 items-center justify-center rounded text-muted hover:text-foreground">
+                        ×
+                      </button>
+                    </div>
+                    <div className="mb-1 flex items-center gap-1">
+                      <QtyBtn onClick={() => setOrderQtyEdit((c) => (c ? { ...c, value: Math.max(1, c.value - 1) } : c))}>−</QtyBtn>
+                      <input
+                        value={orderQtyEdit.value}
+                        onChange={(e) => {
+                          const n = parseInt(e.target.value, 10);
+                          setOrderQtyEdit((c) => (c ? { ...c, value: Number.isFinite(n) && n > 0 ? n : 1 } : c));
+                        }}
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-center text-xs font-medium text-foreground focus:border-primary/60 focus:outline-none"
+                      />
+                      <QtyBtn onClick={() => setOrderQtyEdit((c) => (c ? { ...c, value: c.value + 1 } : c))}>+</QtyBtn>
+                    </div>
+                    <div className="mb-1 grid grid-cols-3 gap-1">
+                      {[1, 5, 25, 100, 500, 1000].map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => setOrderQtyEdit((c) => (c ? { ...c, value: c.value + n } : c))}
+                          className="nums rounded border border-border bg-surface px-1 py-1 text-[10px] font-medium text-muted transition-colors hover:bg-surface-3 hover:text-foreground"
+                        >
+                          +{n}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={async () => {
+                        const q = orderQtyEdit.value;
+                        setOrderQtyEdit(null);
+                        const res = await modifyOrder(t.orderId, { quantity: q });
+                        if (!res?.ok) flash(`✗ ${res?.error ?? "Could not change quantity"}`);
+                        else flash(`✓ Quantity → ${q}`);
+                      }}
+                      className="w-full rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-white hover:brightness-110"
+                    >
+                      Update to {orderQtyEdit.value}
+                    </button>
+                  </div>
                 )}
               </div>
             );
           })}
         </div>
 
+        {/* Inline pending-order ticket (TradingView-style): the entry pill sits ON the entry
+            line (Buy/Sell places · ⇅ flips · TP/SL toggle · qty opens the popover · × cancels);
+            SL/TP badges sit on their own lines (drag to move, × to remove). */}
         {ticket && (
-          <div
-            className="absolute z-20"
-            style={{
-              left: ticket.x,
-              top: ticket.y,
-              transform: `translate(calc(${flip ? "-100% - 14px" : "14px"} + ${dragDelta.x}px), calc(-50% + ${dragDelta.y}px))`,
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="flex w-52 flex-col gap-1 rounded-lg border border-border-strong bg-surface-2/95 p-1.5 shadow-2xl backdrop-blur">
-              <div className="flex items-center justify-between px-0.5">
-                <div
-                  className="flex flex-1 cursor-move select-none items-center gap-1"
-                  onMouseDown={startTicketDrag}
-                  title="Drag to move"
+          <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+            {/* Entry line pill */}
+            {ticketLevels.entryY != null && (
+              <div
+                style={{ top: ticketLevels.entryY, right: ticketLevels.right }}
+                className="pointer-events-auto absolute flex -translate-y-1/2 select-none items-center gap-1"
+              >
+                {/* Both directions visible. Hovering arms that side (re-orients the SL/TP
+                    preview); clicking places it. The armed side is shown bright, the other dimmed. */}
+                <button
+                  onMouseEnter={() => setTicketSide("buy")}
+                  onClick={() => submit("buy")}
+                  title={`Buy ${buyType} @ ${formatPrice(ticketPrice, precision)}`}
+                  className={cn(
+                    "rounded px-2 py-0.5 text-[10px] font-semibold shadow transition-colors hover:brightness-110",
+                    ticketSide === "buy" ? "bg-long text-black" : "bg-long/40 text-black/70",
+                  )}
                 >
-                  <span className="text-[11px] leading-none text-muted-2">⠿</span>
-                  <span className="nums text-[11px] text-muted">@ {formatPrice(ticketPrice, precision)}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <QtyBtn onClick={() => setQty((q) => Math.max(1, q - 1))}>−</QtyBtn>
-                  <span className="nums w-5 text-center text-xs font-medium">{qty}</span>
-                  <QtyBtn onClick={() => setQty((q) => q + 1)}>+</QtyBtn>
-                  <button
-                    onClick={() => setTicket(null)}
-                    className="ml-0.5 flex h-5 w-5 items-center justify-center rounded text-muted hover:bg-surface-3 hover:text-foreground"
-                    aria-label="Close"
-                  >
+                  Buy
+                </button>
+                <button
+                  onMouseEnter={() => setTicketSide("sell")}
+                  onClick={() => submit("sell")}
+                  title={`Sell ${sellType} @ ${formatPrice(ticketPrice, precision)}`}
+                  className={cn(
+                    "rounded px-2 py-0.5 text-[10px] font-semibold shadow transition-colors hover:brightness-110",
+                    ticketSide === "sell" ? "bg-short text-white" : "bg-short/40 text-white/70",
+                  )}
+                >
+                  Sell
+                </button>
+                <button
+                  onClick={() => setTpInput((v) => ((parseFloat(v) || 0) > 0 ? "" : "20"))}
+                  title="Toggle take profit"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                    (parseFloat(tpInput) || 0) > 0 ? "bg-long/90 text-black" : "border border-long/60 bg-surface-2/90 text-long",
+                  )}
+                >
+                  TP
+                </button>
+                <button
+                  onClick={() => setSlInput((v) => ((parseFloat(v) || 0) > 0 ? "" : "10"))}
+                  title="Toggle stop loss"
+                  className={cn(
+                    "rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                    (parseFloat(slInput) || 0) > 0 ? "bg-short/90 text-white" : "border border-short/60 bg-surface-2/90 text-short",
+                  )}
+                >
+                  SL
+                </button>
+                <div className="flex items-center gap-1 rounded border border-[#3b82f6] bg-surface-2/95 px-1 py-0.5 text-[10px] font-semibold shadow">
+                  <button onClick={() => setQtyOpen((o) => !o)} title="Change quantity" className="nums flex items-center gap-1">
+                    <span className="rounded bg-[#3b82f6]/25 px-1 text-foreground">{qty}</span>
+                    <span className="text-muted">{ticketType.charAt(0).toUpperCase() + ticketType.slice(1)}</span>
+                  </button>
+                  {ticketRR > 0 && <span className="nums text-muted-2">1:{ticketRR.toFixed(1)}</span>}
+                  <span className="h-3 w-px bg-border-strong" />
+                  <button onClick={() => setTicket(null)} title="Cancel order" aria-label="Cancel" className="text-muted hover:text-foreground">
                     ×
                   </button>
                 </div>
               </div>
+            )}
 
-              {/* Optional bracket: SL / TP placed on entry fill. */}
-              <div className="grid grid-cols-2 gap-1">
-                <input
-                  value={slInput}
-                  onChange={(e) => setSlInput(e.target.value)}
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  placeholder="SL ticks"
-                  className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-foreground placeholder:text-muted-2 focus:border-primary/60 focus:outline-none"
-                />
-                <input
-                  value={tpInput}
-                  onChange={(e) => setTpInput(e.target.value)}
-                  type="number"
-                  inputMode="numeric"
-                  step="1"
-                  placeholder="TP ticks"
-                  className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-[11px] text-foreground placeholder:text-muted-2 focus:border-primary/60 focus:outline-none"
-                />
-              </div>
-
-              <button
-                onClick={() => submit("sell")}
-                className="rounded-md bg-short px-2 py-1.5 text-center text-xs font-semibold text-white hover:brightness-110"
+            {/* TP badge on the take-profit line (drag to move, × to remove). */}
+            {ticketLevels.tp && (
+              <div
+                style={{ top: ticketLevels.tp.y, right: ticketLevels.right }}
+                className="pointer-events-auto absolute flex -translate-y-1/2 select-none items-center gap-1 rounded bg-long/90 px-1.5 py-0.5 text-[10px] font-semibold text-black shadow"
               >
-                Sell {qty} {sellType.toUpperCase()} @ {formatPrice(ticketPrice, precision)}
-              </button>
-              <button
-                onClick={() => submit("buy")}
-                className="rounded-md bg-long px-2 py-1.5 text-center text-xs font-semibold text-black hover:brightness-110"
-              >
-                Buy {qty} {buyType.toUpperCase()} @ {formatPrice(ticketPrice, precision)}
-              </button>
-
-              {/* Market orders — ignore the clicked level, fill at the live quote. */}
-              <div className="my-0.5 h-px bg-border-strong" />
-              <div className="grid grid-cols-2 gap-1">
-                <button
-                  onClick={() => submit("sell", true)}
-                  className="rounded-md border border-short/50 px-2 py-1 text-xs font-semibold text-short hover:bg-short/15"
-                >
-                  Sell {qty} MKT
-                </button>
-                <button
-                  onClick={() => submit("buy", true)}
-                  className="rounded-md border border-long/50 px-2 py-1 text-xs font-semibold text-long hover:bg-long/15"
-                >
-                  Buy {qty} MKT
+                <span onMouseDown={(e) => startTicketLevelDrag(e, "TP")} title="Drag to move take profit" className="nums flex cursor-ns-resize items-center gap-1">
+                  <span className="opacity-70">⠿</span>
+                  <span>{qty}</span>
+                  <span>{formatCurrency(ticketLevels.tp.usd)}</span>
+                </span>
+                <span className="h-3 w-px bg-black/25" />
+                <button onClick={() => setTpInput("")} title="Remove take profit" aria-label="Remove TP" className="leading-none hover:scale-125">
+                  ×
                 </button>
               </div>
-            </div>
+            )}
+
+            {/* SL badge on the stop-loss line (drag to move, × to remove). */}
+            {ticketLevels.sl && (
+              <div
+                style={{ top: ticketLevels.sl.y, right: ticketLevels.right }}
+                className="pointer-events-auto absolute flex -translate-y-1/2 select-none items-center gap-1 rounded bg-short/90 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
+              >
+                <span onMouseDown={(e) => startTicketLevelDrag(e, "SL")} title="Drag to move stop loss" className="nums flex cursor-ns-resize items-center gap-1">
+                  <span className="opacity-70">⠿</span>
+                  <span>{qty}</span>
+                  <span>{formatCurrency(-ticketLevels.sl.usd)}</span>
+                </span>
+                <span className="h-3 w-px bg-white/30" />
+                <button onClick={() => setSlInput("")} title="Remove stop loss" aria-label="Remove SL" className="leading-none hover:scale-125">
+                  ×
+                </button>
+              </div>
+            )}
+
+            {/* Quantity popover — opens when the qty is clicked. */}
+            {qtyOpen && ticketLevels.entryY != null && (
+              <div
+                style={{ top: ticketLevels.entryY + 16, right: ticketLevels.right }}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="pointer-events-auto absolute z-40 w-44 rounded-lg border border-border-strong bg-surface-2/95 p-2 shadow-2xl backdrop-blur"
+              >
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[11px] text-muted">Quantity</span>
+                  <button onClick={() => setQtyOpen(false)} aria-label="Close" className="flex h-4 w-4 items-center justify-center rounded text-muted hover:text-foreground">
+                    ×
+                  </button>
+                </div>
+                <div className="mb-1 flex items-center gap-1">
+                  <QtyBtn onClick={() => setQty((q) => Math.max(1, q - 1))}>−</QtyBtn>
+                  <input
+                    value={qty}
+                    onChange={(e) => {
+                      const n = parseInt(e.target.value, 10);
+                      setQty(Number.isFinite(n) && n > 0 ? n : 1);
+                    }}
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    className="nums w-full rounded border border-border bg-surface px-1.5 py-1 text-center text-xs font-medium text-foreground focus:border-primary/60 focus:outline-none"
+                  />
+                  <QtyBtn onClick={() => setQty((q) => q + 1)}>+</QtyBtn>
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {[1, 5, 25, 100, 500, 1000].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setQty((q) => q + n)}
+                      className="nums rounded border border-border bg-surface px-1 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-surface-3 hover:text-foreground"
+                    >
+                      +{n}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setQty(1)}
+                    title="Clear quantity to 1"
+                    className="rounded border border-border bg-surface px-1 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-surface-3 hover:text-foreground"
+                  >
+                    C
+                  </button>
+                  <button
+                    onClick={() => {
+                      setQty(1);
+                      setSlInput("10");
+                      setTpInput("20");
+                    }}
+                    title="Reset quantity + brackets"
+                    className="rounded border border-border bg-surface px-1 py-1 text-[11px] font-medium text-muted transition-colors hover:bg-surface-3 hover:text-foreground"
+                  >
+                    ↺
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
+
       </div>
     </div>
   );

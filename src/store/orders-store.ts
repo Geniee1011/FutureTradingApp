@@ -38,7 +38,7 @@ interface OrdersState {
   /** Modify a working order's price and/or its bracket SL/TP (chart drag-to-edit). */
   modifyOrder: (
     id: string,
-    changes: { price?: number | null; stopLoss?: number | null; takeProfit?: number | null },
+    changes: { price?: number | null; stopLoss?: number | null; takeProfit?: number | null; quantity?: number },
   ) => Promise<{ ok: boolean; error?: string }>;
   /** Attach / update / remove a protective bracket on an open position (chart +SL/+TP). */
   setPositionBracket: (
@@ -305,6 +305,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
           ? {
               ...o,
               price: changes.price ?? o.price,
+              quantity: changes.quantity ?? o.quantity,
               slPrice: changes.stopLoss === undefined ? o.slPrice : changes.stopLoss,
               tpPrice: changes.takeProfit === undefined ? o.tpPrice : changes.takeProfit,
               updatedAt: Date.now(),

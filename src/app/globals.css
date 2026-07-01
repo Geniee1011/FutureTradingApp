@@ -29,7 +29,7 @@
   --color-info: #7c9cff;
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+  --font-nums: var(--font-roboto), ui-sans-serif, system-ui, sans-serif;
 
   --radius-card: 0.75rem;
 }
@@ -82,7 +82,7 @@
   /* Tabular numbers everywhere prices/quantities appear */
   .nums {
     font-variant-numeric: tabular-nums;
-    font-family: var(--font-mono);
+    font-family: var(--font-nums);
   }
 
   ::-webkit-scrollbar {

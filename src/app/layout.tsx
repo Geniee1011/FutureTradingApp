@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Roboto } from "next/font/google";
 import "./globals.css";
 import { AuthHydrator } from "@/components/auth/AuthHydrator";
 import { BackendStatus } from "@/components/layout/BackendStatus";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Numbers (`.nums`) render in Roboto with tabular figures — a clean geometric sans that
+// matches the Tradovate look (proportional, not monospace; columns stay aligned).
+const robotoNums = Roboto({ variable: "--font-roboto", subsets: ["latin"], weight: ["400", "500", "700"] });
 
 export const metadata: Metadata = {
   title: "Trader Portal",
@@ -21,7 +23,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       lang="en"
       data-theme="dark"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${robotoNums.variable} h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: noFlashTheme }} />
