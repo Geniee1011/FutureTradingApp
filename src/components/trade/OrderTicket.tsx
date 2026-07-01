@@ -16,6 +16,7 @@ interface Suggestion { symbol: string; quantity: number; risk: number }
 export function OrderTicket({ symbol }: { symbol: string }) {
   const placeOrder = useOrdersStore((s) => s.placeOrder);
   const quote = useMarketStore((s) => s.quotes[symbol]);
+  const selectSymbol = useMarketStore((s) => s.selectSymbol);
   const rule = useAccountStore((s) => s.summary?.rule);
   const inst = getInstrument(symbol);
   const precision = inst?.pricePrecision ?? 2;
@@ -104,6 +105,9 @@ export function OrderTicket({ symbol }: { symbol: string }) {
       setSlTicks("10");
       setTpTicks("20");
       setPendingSuggestion(null);
+      // Placed on a different symbol than the chart shows (the micro alternative from the
+      // max-risk suggestion) → forward the chart to it so the new position + its SL/TP are visible.
+      if (sym !== symbol) selectSymbol(sym);
     } else if (res.suggestion) {
       // Max-risk-per-trade exceeded → surface the micro alternative.
       setPendingSuggestion({ msg: res.error ?? "Order exceeds max risk.", suggestion: res.suggestion, side: orderSide });
