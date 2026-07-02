@@ -180,6 +180,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [ticket, setTicket] = useState<ChartTicket | null>(null);
   // TradingView-style click menu: click a level → choose Buy/Sell (auto limit/stop) → opens the ticket.
   const [clickMenu, setClickMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+  const clickMenuRef = useRef<HTMLDivElement | null>(null); // for click-outside dismissal
   const [qty, setQty] = useState(1);
   const [ticketSide, setTicketSide] = useState<Side>("buy"); // TradingView-style entry direction toggle
   const [slInput, setSlInput] = useState("");
@@ -349,6 +350,13 @@ export function CandleChart({ symbol }: { symbol: string }) {
     candleRef.current?.applyOptions({ upColor: c.up, downColor: c.down, wickUpColor: c.up, wickDownColor: c.down });
     volumeRef.current?.applyOptions({ color: c.volume });
   }, [theme]);
+
+  // Re-apply the price format when the INSTRUMENT changes. The series is created once (mount),
+  // so on a symbol switch its format would otherwise stay frozen at the first symbol's precision
+  // + tick — e.g. GC (0.1) would keep ES's 2dp @ 0.25 and show impossible prices like 4066.25.
+  useEffect(() => {
+    candleRef.current?.applyOptions({ priceFormat: { type: "price", precision, minMove: tickSize } });
+  }, [precision, tickSize]);
 
   // Frame the opening view on the most recent `DEFAULT_VISIBLE_BARS` bars (the deep
   // history stays scrollable to the left), then release price auto-fit so vertical
@@ -980,6 +988,19 @@ export function CandleChart({ symbol }: { symbol: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [ticket, clickMenu]);
 
+  // Dismiss the Buy/Sell menu on ANY press outside it — the chart's click event doesn't fire
+  // for drags or axis clicks, so relying on it alone left the menu stuck open. A native document
+  // listener catches every press; clicks inside the menu are ignored (its buttons handle those).
+  useEffect(() => {
+    if (!clickMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (clickMenuRef.current?.contains(e.target as Node)) return;
+      setClickMenu(null);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [clickMenu]);
+
   const market = quote?.price ?? lastCandleRef.current?.close ?? 0;
   const ticketPrice = ticket ? round(ticket.price) : 0;
   const isAbove = ticketPrice >= market;
@@ -1507,6 +1528,7 @@ export function CandleChart({ symbol }: { symbol: string }) {
             picking a side opens the inline ticket armed to it. */}
         {clickMenu && (
           <div
+            ref={clickMenuRef}
             className="pointer-events-auto absolute z-40"
             style={{ left: clickMenu.x, top: clickMenu.y }}
             onMouseDown={(e) => e.stopPropagation()}

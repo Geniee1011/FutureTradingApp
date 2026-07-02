@@ -109,6 +109,9 @@ export function createDatafeed() {
       const inst = getInstrument(symbolName);
       if (!inst) return onError("unknown symbol");
       const pricescale = 10 ** inst.pricePrecision;
+      // minmov = ticks per price-scale unit, so minmov/pricescale = the real tick size
+      // (ES/NQ 0.25 → 25, GC 0.1 → 1, CL 0.01 → 1, YM 1 → 1). Was hardcoded to 1 (→ 0.01).
+      const minmov = Math.max(1, Math.round(inst.tickSize * pricescale));
       onResolve({
         name: inst.symbol,
         full_name: inst.symbol,
@@ -120,7 +123,7 @@ export function createDatafeed() {
         listed_exchange: "TradingBackend",
         format: "price",
         pricescale,
-        minmov: 1,
+        minmov,
         has_intraday: true,
         supported_resolutions: ["1", "5", "15", "60", "240", "1D"],
         volume_precision: 2,

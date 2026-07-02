@@ -29,18 +29,29 @@ export const INSTRUMENTS: Instrument[] = [
 
 export const DEFAULT_SYMBOL = "ES";
 
+// CME month codes (F Jan … Z Dec) — used to strip a dated contract code to its product root.
+const MONTH_CODES = "FGHJKMNQUVXZ";
+
+/**
+ * Resolve an instrument by base symbol ("GC") OR a dated contract code ("GCG6", "ESM6").
+ * The chart/datafeed can be driven by either form, so falling back to the root keeps the
+ * price precision / tick size / multiplier correct instead of defaulting to 2dp @ 0.01.
+ */
 export function getInstrument(symbol: string): Instrument | undefined {
-  return INSTRUMENTS.find((i) => i.symbol === symbol);
+  const direct = INSTRUMENTS.find((i) => i.symbol === symbol);
+  if (direct) return direct;
+  const root = symbol?.match(new RegExp(`^([A-Z]+?)[${MONTH_CODES}]\\d{1,2}$`))?.[1];
+  return root ? INSTRUMENTS.find((i) => i.symbol === root) : undefined;
 }
 
 /** Contract point value in USD for a symbol (defaults to 1 for unknown symbols). */
 export function getMultiplier(symbol: string): number {
-  return INSTRUMENTS.find((i) => i.symbol === symbol)?.multiplier ?? 1;
+  return getInstrument(symbol)?.multiplier ?? 1;
 }
 
 /** Intraday margin (USD) required to hold one contract of a symbol. */
 export function getMargin(symbol: string): number {
-  return INSTRUMENTS.find((i) => i.symbol === symbol)?.marginPerContract ?? 0;
+  return getInstrument(symbol)?.marginPerContract ?? 0;
 }
 
 /* ------------------------------- Nav ------------------------------ */
