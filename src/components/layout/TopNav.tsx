@@ -16,10 +16,7 @@ export function TopNav() {
     <header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-4">
         <Link href="/dashboard" className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <Icon name="logo" width={18} height={18} />
-          </span>
-          <span className="text-sm font-semibold tracking-tight">Trader Portal</span>
+          <span className="text-sm font-semibold tracking-tight">THE VAULT</span>
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex">
