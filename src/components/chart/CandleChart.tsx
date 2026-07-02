@@ -178,6 +178,8 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const [resolution, setResolution] = useState(60);
   const [loading, setLoading] = useState(true);
   const [ticket, setTicket] = useState<ChartTicket | null>(null);
+  // TradingView-style click menu: click a level → choose Buy/Sell (auto limit/stop) → opens the ticket.
+  const [clickMenu, setClickMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const [qty, setQty] = useState(1);
   const [ticketSide, setTicketSide] = useState<Side>("buy"); // TradingView-style entry direction toggle
   const [slInput, setSlInput] = useState("");
@@ -204,23 +206,22 @@ export function CandleChart({ symbol }: { symbol: string }) {
   // Order labels dismissed from the chart (hidden ONLY — the orders stay active).
   // Seeded from localStorage so dismissals survive a page refresh.
 
-  // Seed defaults when the ticket opens (bracket ticks so the draggable SL/TP handles show
-  // up right away; direction from where the level sits vs the market — below = buy limit,
-  // above = sell limit, TradingView-style); clear them when it closes.
+  // On open, show ONLY the entry pill — no SL/TP lines until the trader toggles TP/SL on
+  // (which seeds their default ticks). Direction comes from the Buy/Sell menu. Clear on close.
+  // Keyed on open/closed (not the ticket object) so DRAGGING the entry price doesn't wipe the
+  // trader's SL/TP/qty every frame.
+  const ticketOpen = ticket != null;
   useEffect(() => {
-    if (ticket) {
-      setSlInput("10");
-      setTpInput("20");
+    if (ticketOpen) {
+      setSlInput("");
+      setTpInput("");
       setQty(1);
-      const mkt = quote?.price ?? lastCandleRef.current?.close ?? 0;
-      setTicketSide(mkt > 0 && ticket.price >= mkt ? "sell" : "buy");
     } else {
       setSlInput("");
       setTpInput("");
       setQtyOpen(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticket]);
+  }, [ticketOpen]);
 
   const placeOrder = useOrdersStore((s) => s.placeOrder);
   const modifyOrder = useOrdersStore((s) => s.modifyOrder);
@@ -311,7 +312,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
       if (!param.point || !candleRef.current) return;
       const price = candleRef.current.coordinateToPrice(param.point.y);
       if (price == null) return;
-      setTicket({ x: param.point.x, y: param.point.y, price: price as number });
+      // Show the Buy/Sell menu at the clicked level; picking a side opens the ticket (below).
+      setTicket(null);
+      setClickMenu({ x: param.point.x, y: param.point.y, price: price as number });
     });
 
     chartRef.current = chart;
@@ -710,6 +713,58 @@ export function CandleChart({ symbol }: { symbol: string }) {
     window.addEventListener("mouseup", onUp);
   }
 
+  // Drag the pending-order ENTRY up/down (before it fills) to reposition the level. The order
+  // type auto-flips limit↔stop as it crosses the market, TradingView-style. Snapped to the tick.
+  function startTicketEntryDrag(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const series = candleRef.current;
+    const container = containerRef.current;
+    if (!series || !container || !ticket) return;
+    const onMove = (ev: MouseEvent) => {
+      const raw = series.coordinateToPrice(ev.clientY - container.getBoundingClientRect().top);
+      if (raw == null) return;
+      const price = Math.round((raw as number) / tickSize) * tickSize;
+      if (price > 0) setTicket((t) => (t ? { ...t, price } : t));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  // Press the ticket's TP/SL toggle and DRAG onto the chart to place that level in one motion
+  // (the line follows the cursor). A plain click (no drag) toggles it at the default distance,
+  // or off if it was already on. Mirrors the working-order +SL/+TP drag-to-add.
+  function startAddTicketBracketDrag(e: React.MouseEvent, role: "SL" | "TP") {
+    e.preventDefault();
+    e.stopPropagation();
+    const series = candleRef.current;
+    const container = containerRef.current;
+    if (!series || !container || !ticket) return;
+    const entry = ticket.price;
+    const setter = role === "SL" ? setSlInput : setTpInput;
+    const wasOn = (parseFloat(role === "SL" ? slInput : tpInput) || 0) > 0;
+    let dragged = false;
+    const onMove = (ev: MouseEvent) => {
+      const raw = series.coordinateToPrice(ev.clientY - container.getBoundingClientRect().top);
+      if (raw == null) return;
+      dragged = true;
+      const ticks = Math.max(1, Math.round(Math.abs((raw as number) - entry) / tickSize));
+      setter(String(ticks));
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      // Plain click (no drag) → toggle: add at the default distance, or remove if already on.
+      if (!dragged) setter(wasOn ? "" : role === "SL" ? "10" : "20");
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   // Draw a dashed price line per working order (green buy / red sell), with the
   // price on the axis. Re-created when the order set or any price changes.
   useEffect(() => {
@@ -911,13 +966,17 @@ export function CandleChart({ symbol }: { symbol: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey]);
 
-  // Close the ticket on Escape.
+  // Close the ticket / the Buy/Sell menu on Escape.
   useEffect(() => {
-    if (!ticket) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setTicket(null);
+    if (!ticket && !clickMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setTicket(null);
+      setClickMenu(null);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ticket]);
+  }, [ticket, clickMenu]);
 
   const market = quote?.price ?? lastCandleRef.current?.close ?? 0;
   const ticketPrice = ticket ? round(ticket.price) : 0;
@@ -932,6 +991,21 @@ export function CandleChart({ symbol }: { symbol: string }) {
   const ticketRisk = (parseFloat(slInput) || 0) * tickSize * qty * multiplier;
   const ticketReward = (parseFloat(tpInput) || 0) * tickSize * qty * multiplier;
   const ticketRR = ticketRisk > 0 ? ticketReward / ticketRisk : 0;
+
+  // Buy/Sell menu: order type derives from where the level sits vs the market (below → buy-limit /
+  // sell-stop; above → the reverse). Menu flips left when the click is near the right edge.
+  const menuAbove = clickMenu ? clickMenu.price >= market : false;
+  const menuBuyType: OrderType = menuAbove ? "stop" : "limit";
+  const menuSellType: OrderType = menuAbove ? "limit" : "stop";
+  const menuFlip = clickMenu && containerRef.current ? clickMenu.x > containerRef.current.clientWidth * 0.62 : false;
+
+  // Pick a side from the menu → arm that direction and open the inline ticket at the level.
+  function pickSide(side: Side) {
+    if (!clickMenu) return;
+    setTicketSide(side);
+    setTicket({ x: clickMenu.x, y: clickMenu.y, price: clickMenu.price });
+    setClickMenu(null);
+  }
 
   async function submit(side: Side, asMarket = false) {
     if (!ticket) return;
@@ -1250,9 +1324,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
             // component re-renders on the quote selector). The entry price moves to the title.
             const posPnl = isPosition ? (market - t.price) * (t.side === "buy" ? 1 : -1) * t.qty * multiplier : 0;
             // TradingView-style working-order entry: quick-add TP/SL pills to the LEFT of a
-            // segmented [ qty · Buy/Sell Type · × ] pill. Position + SL/TP legs + a mid-drag
-            // entry (pending ✓/✗) keep the single-pill look.
-            const tvEntry = isEntry && !isPending;
+            // segmented [ qty · Buy/Sell Type · × ] pill. Only a PENDING order entry — the open
+            // position (also role "entry"), SL/TP legs, and a mid-drag entry keep the single pill.
+            const tvEntry = isEntry && !isPending && !isPosition;
             return (
               <div
                 key={t.lineKey}
@@ -1427,6 +1501,42 @@ export function CandleChart({ symbol }: { symbol: string }) {
           })}
         </div>
 
+        {/* Buy/Sell menu at the clicked level (TradingView-style). Order type is auto-derived;
+            picking a side opens the inline ticket armed to it. */}
+        {clickMenu && (
+          <div
+            className="pointer-events-auto absolute z-40"
+            style={{ left: clickMenu.x, top: clickMenu.y }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div
+              className={cn(
+                "flex w-56 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border-strong bg-surface-2/95 py-1 text-xs shadow-2xl backdrop-blur",
+                menuFlip ? "-translate-x-[calc(100%+14px)]" : "translate-x-[14px]",
+              )}
+            >
+              <button onClick={() => pickSide("buy")} className="flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-3">
+                <span className="text-long">↗</span>
+                <span className="font-semibold text-foreground">Buy</span>
+                <span className="nums ml-auto text-muted">
+                  {qty} {symbol} @ {formatPrice(clickMenu.price, precision)} {menuBuyType}
+                </span>
+              </button>
+              <button onClick={() => pickSide("sell")} className="flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-surface-3">
+                <span className="text-short">↘</span>
+                <span className="font-semibold text-foreground">Sell</span>
+                <span className="nums ml-auto text-muted">
+                  {qty} {symbol} @ {formatPrice(clickMenu.price, precision)} {menuSellType}
+                </span>
+              </button>
+              <div className="my-0.5 h-px bg-border-strong" />
+              <button onClick={() => setClickMenu(null)} className="px-3 py-1.5 text-left text-muted transition-colors hover:bg-surface-3 hover:text-foreground">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Inline pending-order ticket (TradingView-style): the entry pill sits ON the entry
             line (Buy/Sell places · ⇅ flips · TP/SL toggle · qty opens the popover · × cancels);
             SL/TP badges sit on their own lines (drag to move, × to remove). */}
@@ -1438,58 +1548,63 @@ export function CandleChart({ symbol }: { symbol: string }) {
                 style={{ top: ticketLevels.entryY, right: ticketLevels.right }}
                 className="pointer-events-auto absolute flex -translate-y-1/2 select-none items-center gap-1"
               >
-                {/* Both directions visible. Hovering arms that side (re-orients the SL/TP
-                    preview); clicking places it. The armed side is shown bright, the other dimmed. */}
+                {/* Direction was already chosen in the Buy/Sell menu — a single confirm button
+                    for that side (× cancels and re-click the chart to switch direction). */}
                 <button
-                  onMouseEnter={() => setTicketSide("buy")}
-                  onClick={() => submit("buy")}
-                  title={`Buy ${buyType} @ ${formatPrice(ticketPrice, precision)}`}
+                  onClick={() => submit(ticketSide)}
+                  title={`Place ${ticketSide} ${ticketType} @ ${formatPrice(ticketPrice, precision)}`}
                   className={cn(
-                    "rounded px-2 py-0.5 text-[10px] font-semibold shadow transition-colors hover:brightness-110",
-                    ticketSide === "buy" ? "bg-long text-black" : "bg-long/40 text-black/70",
+                    "rounded px-2 py-0.5 text-[10px] font-semibold shadow hover:brightness-110",
+                    ticketSide === "buy" ? "bg-long text-black" : "bg-short text-white",
                   )}
                 >
-                  Buy
+                  {ticketSide === "buy" ? "Buy" : "Sell"}
                 </button>
                 <button
-                  onMouseEnter={() => setTicketSide("sell")}
-                  onClick={() => submit("sell")}
-                  title={`Sell ${sellType} @ ${formatPrice(ticketPrice, precision)}`}
+                  onMouseDown={(e) => startAddTicketBracketDrag(e, "TP")}
+                  title="Drag onto the chart to set take profit (or click to add at default)"
                   className={cn(
-                    "rounded px-2 py-0.5 text-[10px] font-semibold shadow transition-colors hover:brightness-110",
-                    ticketSide === "sell" ? "bg-short text-white" : "bg-short/40 text-white/70",
-                  )}
-                >
-                  Sell
-                </button>
-                <button
-                  onClick={() => setTpInput((v) => ((parseFloat(v) || 0) > 0 ? "" : "20"))}
-                  title="Toggle take profit"
-                  className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                    "cursor-ns-resize rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
                     (parseFloat(tpInput) || 0) > 0 ? "bg-long/90 text-black" : "border border-long/60 bg-surface-2/90 text-long",
                   )}
                 >
                   TP
                 </button>
                 <button
-                  onClick={() => setSlInput((v) => ((parseFloat(v) || 0) > 0 ? "" : "10"))}
-                  title="Toggle stop loss"
+                  onMouseDown={(e) => startAddTicketBracketDrag(e, "SL")}
+                  title="Drag onto the chart to set stop loss (or click to add at default)"
                   className={cn(
-                    "rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
+                    "cursor-ns-resize rounded px-1.5 py-0.5 text-[10px] font-semibold shadow",
                     (parseFloat(slInput) || 0) > 0 ? "bg-short/90 text-white" : "border border-short/60 bg-surface-2/90 text-short",
                   )}
                 >
                   SL
                 </button>
-                <div className="flex items-center gap-1 rounded border border-[#3b82f6] bg-surface-2/95 px-1 py-0.5 text-[10px] font-semibold shadow">
-                  <button onClick={() => setQtyOpen((o) => !o)} title="Change quantity" className="nums flex items-center gap-1">
-                    <span className="rounded bg-[#3b82f6]/25 px-1 text-foreground">{qty}</span>
-                    <span className="text-muted">{ticketType.charAt(0).toUpperCase() + ticketType.slice(1)}</span>
+                {/* This pill IS the order's drag handle — press anywhere on it (the type label /
+                    padding) and drag to move the order. The qty chip and × stay clickable. */}
+                <div
+                  onMouseDown={startTicketEntryDrag}
+                  title="Drag to move the order price"
+                  className="flex cursor-ns-resize items-center gap-1.5 rounded border border-[#3b82f6] bg-surface-2/95 px-2 py-1 text-[11px] font-semibold shadow"
+                >
+                  <button
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => setQtyOpen((o) => !o)}
+                    title="Change quantity"
+                    className="nums rounded bg-[#3b82f6]/25 px-1.5 py-0.5 text-foreground hover:brightness-125"
+                  >
+                    {qty}
                   </button>
+                  <span className="text-muted">{ticketType.charAt(0).toUpperCase() + ticketType.slice(1)}</span>
                   {ticketRR > 0 && <span className="nums text-muted-2">1:{ticketRR.toFixed(1)}</span>}
-                  <span className="h-3 w-px bg-border-strong" />
-                  <button onClick={() => setTicket(null)} title="Cancel order" aria-label="Cancel" className="text-muted hover:text-foreground">
+                  <span className="h-3.5 w-px bg-border-strong" />
+                  <button
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => setTicket(null)}
+                    title="Cancel order"
+                    aria-label="Cancel"
+                    className="px-0.5 text-muted hover:text-foreground"
+                  >
                     ×
                   </button>
                 </div>
