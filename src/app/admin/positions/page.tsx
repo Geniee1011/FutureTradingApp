@@ -81,7 +81,10 @@ export default function AdminPositionsPage() {
     const tick = () => {
       if (document.visibilityState === "visible") void load({ silent: true });
     };
-    const id = setInterval(tick, 3000);
+    // ~1s so the admin unrealized P&L tracks the trader's live chart closely (the account
+    // stream marks positions every ~1s). Two independent clocks can't be frame-perfect, but
+    // this keeps the drift to a single tick instead of up to 3s.
+    const id = setInterval(tick, 1000);
     document.addEventListener("visibilitychange", tick);
     return () => {
       clearInterval(id);
