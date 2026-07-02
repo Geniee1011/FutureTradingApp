@@ -31,6 +31,8 @@ interface AccountState {
   reset: () => void;
   /** Apply a server `account_update` (account-updates channel). */
   applyAccountUpdate: (u: AccountUpdate) => void;
+  /** Re-pull the transaction ledger + violations from the backend (live account page). */
+  refreshLedger: () => void;
 }
 
 export const useAccountStore = create<AccountState>((set, get) => ({
@@ -78,6 +80,11 @@ export const useAccountStore = create<AccountState>((set, get) => ({
   reset: () => set({ summary: null, transactions: [], violations: [], seeded: false }),
 
   applyAccountUpdate: (u) => {
+    const prev = get().summary;
+    // A change in cash balance (realized trade P&L, fee, funding, deposit/withdrawal) or in
+    // account status means a new ledger/violation row was just written server-side → pull the
+    // history so the account page's transaction list updates in real time.
+    const ledgerChanged = prev != null && (Math.abs(prev.balance - u.balance) > 0.005 || prev.status !== u.status);
     set((s) =>
       s.summary
         ? {
@@ -96,5 +103,28 @@ export const useAccountStore = create<AccountState>((set, get) => ({
           }
         : s,
     );
+    if (ledgerChanged) get().refreshLedger();
+  },
+
+  refreshLedger: () => {
+    const token = getAuthToken();
+    if (USE_MOCK_FEED || !API_BASE || !token) return; // static ledger in mock mode
+    void (async () => {
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const [tRes, vRes] = await Promise.all([
+          fetch(`${API_BASE}/api/transactions`, { headers }),
+          fetch(`${API_BASE}/api/violations`, { headers }),
+        ]);
+        const nextTx = tRes.ok ? ((await tRes.json()) as Transaction[]) : null;
+        const nextViol = vRes.ok ? ((await vRes.json()) as TraderViolation[]) : null;
+        set((s) => ({
+          transactions: nextTx ?? s.transactions,
+          violations: nextViol ?? s.violations,
+        }));
+      } catch {
+        /* transient network error — keep the existing ledger */
+      }
+    })();
   },
 }));

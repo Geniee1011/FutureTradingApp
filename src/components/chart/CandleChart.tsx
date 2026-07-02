@@ -282,7 +282,9 @@ export function CandleChart({ symbol }: { symbol: string }) {
       borderVisible: false,
       wickUpColor: c.up,
       wickDownColor: c.down,
-      priceFormat: { type: "price", precision, minMove: 1 / 10 ** precision },
+      // minMove = the instrument's real tick size (not 1/10^precision), so the axis + crosshair
+      // snap to valid ticks (e.g. .00/.25/.50/.75) instead of showing impossible prices like 7530.11.
+      priceFormat: { type: "price", precision, minMove: tickSize },
       // Extend the auto-fit range to include any working-order levels (entry/SL/TP),
       // so fitting the price scale never leaves a placed bracket off-screen.
       autoscaleInfoProvider: (original: () => AutoscaleInfo | null) => {
