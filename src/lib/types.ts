@@ -126,6 +126,8 @@ export interface AccountSummary {
   currency: string;
   status: "ACTIVE" | "PASSED" | "FAILED" | "SUSPENDED";
   statusReason?: string | null; // why a non-ACTIVE account is in that state (the breach detail)
+  tradingPaused?: boolean; // still ACTIVE but paused for the day after hitting the daily-loss limit
+  tradingPausedReason?: string | null; // the daily-limit breach detail
   startingBalance: number;
   balance: number; // cash
   equity: number; // balance + unrealized pnl
@@ -338,6 +340,25 @@ export interface AdminClosedPosition {
   closedAt: number;
 }
 
+/** An account that reached its profit target and is awaiting an admin Approve/Disapprove. */
+export interface AdminPendingReview {
+  accountId: string;
+  traderId: string;
+  traderName: string;
+  email: string;
+  balance: number;
+  startingBalance: number;
+  realizedProfit: number;
+  profitTarget: number;
+  currentTier: string | null;
+  currentTierLabel: string | null;
+  currentPhase: string | null;
+  nextTier: string | null;
+  nextTierLabel: string | null;
+  decisionType: string; // e.g. "Next challenge phase" | "Funded account" | "Payout ($1M reset)"
+  pendingReviewAt: number;
+}
+
 export type ActivitySeverity = "info" | "warning" | "critical";
 
 export interface ActivityEvent {
@@ -383,6 +404,9 @@ export type ServerMessage =
       dailyPnl: number;
       totalPnl: number;
       drawdown: number;
+      pendingReview?: boolean;
+      tradingPaused?: boolean;
+      tradingPausedReason?: string | null;
     }
   | { type: "order_update"; order: Order }
   | { type: "positions_snapshot"; positions: Position[] }

@@ -7,6 +7,7 @@ import type {
   AdminAccount,
   AdminClosedPosition,
   AdminOpenPosition,
+  AdminPendingReview,
   AdminViolation,
   EvalRule,
   RuleTemplate,
@@ -66,6 +67,10 @@ interface AdminState {
   resetPassword: (userId: string, newPassword: string) => Promise<AdminActionResult>;
   /** All open + closed positions across every account (admin-wide Positions view). */
   getAllPositions: () => Promise<{ open: AdminOpenPosition[]; closed: AdminClosedPosition[] }>;
+  /** Accounts that hit their profit target and await Approve/Disapprove (empty in mock mode). */
+  getPendingReviews: () => Promise<AdminPendingReview[]>;
+  /** Approve (advance/pass) or disapprove (reset current phase) a pending profit-target review. */
+  submitReviewDecision: (accountId: string, decision: "approve" | "disapprove") => Promise<AdminActionResult>;
 }
 
 export interface AdminActionResult {
@@ -367,5 +372,27 @@ export const useAdminStore = create<AdminState>((set, get) => ({
       open: AdminOpenPosition[];
       closed: AdminClosedPosition[];
     };
+  },
+
+  getPendingReviews: async () => {
+    const token = live();
+    if (!token) return [];
+    const res = await fetch(`${API_BASE}/api/admin/reviews`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+    if (!res || !res.ok) return [];
+    return (await res.json().catch(() => [])) as AdminPendingReview[];
+  },
+
+  submitReviewDecision: async (accountId, decision) => {
+    const token = live();
+    if (!token) return { ok: false, error: "Admin actions require the backend (not available in demo mode)." };
+    const res = await fetch(`${API_BASE}/api/admin/reviews/${accountId}`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ decision }),
+    }).catch(() => null);
+    if (!res) return { ok: false, error: "network error" };
+    const data = (await res.json().catch(() => ({}))) as AdminActionResult;
+    if (res.ok) await get().refresh().catch(() => {});
+    return res.ok ? { ...data, ok: true } : { ok: false, error: data.error ?? "decision failed" };
   },
 }));

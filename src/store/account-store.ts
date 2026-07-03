@@ -19,6 +19,9 @@ interface AccountUpdate {
   dailyPnl: number;
   totalPnl: number;
   drawdown: number;
+  pendingReview?: boolean;
+  tradingPaused?: boolean;
+  tradingPausedReason?: string | null;
 }
 
 interface AccountState {
@@ -26,11 +29,17 @@ interface AccountState {
   transactions: Transaction[];
   violations: TraderViolation[];
   seeded: boolean;
+  /** Server flag: this account reached its profit target and is awaiting admin review. */
+  pendingReview: boolean;
+  /** Local: the trader has dismissed the congratulations notification this session. */
+  pendingReviewSeen: boolean;
   seed: () => void;
   /** Clear the account (on logout / user switch) so the next user loads fresh. */
   reset: () => void;
   /** Apply a server `account_update` (account-updates channel). */
   applyAccountUpdate: (u: AccountUpdate) => void;
+  /** Dismiss the profit-target congratulations notification. */
+  dismissPendingReview: () => void;
   /** Re-pull the transaction ledger + violations from the backend (live account page). */
   refreshLedger: () => void;
 }
@@ -40,6 +49,8 @@ export const useAccountStore = create<AccountState>((set, get) => ({
   transactions: [],
   violations: [],
   seeded: false,
+  pendingReview: false,
+  pendingReviewSeen: false,
 
   seed: () => {
     if (get().seeded) return;
@@ -77,7 +88,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     })();
   },
 
-  reset: () => set({ summary: null, transactions: [], violations: [], seeded: false }),
+  reset: () => set({ summary: null, transactions: [], violations: [], seeded: false, pendingReview: false, pendingReviewSeen: false }),
 
   applyAccountUpdate: (u) => {
     const prev = get().summary;
@@ -85,26 +96,33 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     // account status means a new ledger/violation row was just written server-side → pull the
     // history so the account page's transaction list updates in real time.
     const ledgerChanged = prev != null && (Math.abs(prev.balance - u.balance) > 0.005 || prev.status !== u.status);
-    set((s) =>
-      s.summary
+    const nowPending = !!u.pendingReview;
+    set((s) => ({
+      summary: s.summary
         ? {
-            summary: {
-              ...s.summary,
-              status: u.status,
-              statusReason: u.statusReason ?? null,
-              balance: u.balance,
-              equity: u.equity,
-              unrealizedPnl: u.unrealizedPnl,
-              realizedPnlToday: u.realizedPnlToday,
-              dailyPnl: u.dailyPnl,
-              totalPnl: u.totalPnl,
-              drawdown: u.drawdown,
-            },
+            ...s.summary,
+            status: u.status,
+            statusReason: u.statusReason ?? null,
+            tradingPaused: u.tradingPaused ?? false,
+            tradingPausedReason: u.tradingPausedReason ?? null,
+            balance: u.balance,
+            equity: u.equity,
+            unrealizedPnl: u.unrealizedPnl,
+            realizedPnlToday: u.realizedPnlToday,
+            dailyPnl: u.dailyPnl,
+            totalPnl: u.totalPnl,
+            drawdown: u.drawdown,
           }
-        : s,
-    );
+        : s.summary,
+      pendingReview: nowPending,
+      // Server cleared the flag (admin decided / phase reset) → let the notification arm again
+      // for a future target hit.
+      pendingReviewSeen: nowPending ? s.pendingReviewSeen : false,
+    }));
     if (ledgerChanged) get().refreshLedger();
   },
+
+  dismissPendingReview: () => set({ pendingReviewSeen: true }),
 
   refreshLedger: () => {
     const token = getAuthToken();
