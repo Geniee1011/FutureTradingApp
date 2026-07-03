@@ -22,6 +22,7 @@ interface AccountUpdate {
   pendingReview?: boolean;
   tradingPaused?: boolean;
   tradingPausedReason?: string | null;
+  resetRequestedAt?: number | null;
 }
 
 interface AccountState {
@@ -40,6 +41,8 @@ interface AccountState {
   applyAccountUpdate: (u: AccountUpdate) => void;
   /** Dismiss the profit-target congratulations notification. */
   dismissPendingReview: () => void;
+  /** FAILED account: request a self-service reset (auto-applies 12h later). */
+  requestReset: () => Promise<void>;
   /** Re-pull the transaction ledger + violations from the backend (live account page). */
   refreshLedger: () => void;
 }
@@ -105,6 +108,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
             statusReason: u.statusReason ?? null,
             tradingPaused: u.tradingPaused ?? false,
             tradingPausedReason: u.tradingPausedReason ?? null,
+            resetRequestedAt: u.resetRequestedAt ?? null,
             balance: u.balance,
             equity: u.equity,
             unrealizedPnl: u.unrealizedPnl,
@@ -123,6 +127,26 @@ export const useAccountStore = create<AccountState>((set, get) => ({
   },
 
   dismissPendingReview: () => set({ pendingReviewSeen: true }),
+
+  requestReset: async () => {
+    const token = getAuthToken();
+    if (USE_MOCK_FEED || !API_BASE || !token) return;
+    // Optimistic: flip the banner to the "requested" state immediately; the next
+    // account_update tick confirms the server timestamp.
+    set((s) => (s.summary ? { summary: { ...s.summary, resetRequestedAt: s.summary.resetRequestedAt ?? Date.now() } } : s));
+    try {
+      const res = await fetch(`${API_BASE}/api/account/request-reset`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await res.json().catch(() => ({}))) as { resetRequestedAt?: number };
+      if (res.ok && data.resetRequestedAt) {
+        set((s) => (s.summary ? { summary: { ...s.summary, resetRequestedAt: data.resetRequestedAt } } : s));
+      }
+    } catch {
+      /* transient — the next account_update reconciles the true state */
+    }
+  },
 
   refreshLedger: () => {
     const token = getAuthToken();

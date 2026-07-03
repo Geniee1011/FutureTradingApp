@@ -128,6 +128,7 @@ export interface AccountSummary {
   statusReason?: string | null; // why a non-ACTIVE account is in that state (the breach detail)
   tradingPaused?: boolean; // still ACTIVE but paused for the day after hitting the daily-loss limit
   tradingPausedReason?: string | null; // the daily-limit breach detail
+  resetRequestedAt?: number | null; // FAILED account: trader requested a reset (auto-applies 12h later)
   startingBalance: number;
   balance: number; // cash
   equity: number; // balance + unrealized pnl
@@ -407,6 +408,7 @@ export type ServerMessage =
       pendingReview?: boolean;
       tradingPaused?: boolean;
       tradingPausedReason?: string | null;
+      resetRequestedAt?: number | null;
     }
   | { type: "order_update"; order: Order }
   | { type: "positions_snapshot"; positions: Position[] }

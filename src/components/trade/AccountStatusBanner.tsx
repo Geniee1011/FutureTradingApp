@@ -1,7 +1,16 @@
 "use client";
 
 import { useAccountStore } from "@/store/account-store";
+import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+
+const AUTO_RESET_HOURS = 12;
+
+/** Whole hours remaining until the auto-reset fires (min 0). */
+function hoursUntilReset(requestedAt: number): number {
+  const elapsedH = (Date.now() - requestedAt) / 3_600_000;
+  return Math.max(0, Math.ceil(AUTO_RESET_HOURS - elapsedH));
+}
 
 /**
  * Prominent banner shown whenever trading is off or interrupted — failed/passed/
@@ -12,9 +21,10 @@ import { cn } from "@/lib/utils";
  */
 export function AccountStatusBanner() {
   const summary = useAccountStore((s) => s.summary);
+  const requestReset = useAccountStore((s) => s.requestReset);
   if (!summary) return null;
 
-  const { status, statusReason, tradingPaused, tradingPausedReason } = summary;
+  const { status, statusReason, tradingPaused, tradingPausedReason, resetRequestedAt } = summary;
 
   // Daily-loss limit: the account is still ACTIVE (not failed) but paused until tomorrow.
   if (status === "ACTIVE") {
@@ -59,13 +69,35 @@ export function AccountStatusBanner() {
 
   if (!config) return null;
 
+  const isFailed = status === "FAILED";
+  const resetRequested = resetRequestedAt != null;
+
   return (
     <div className={cn("flex items-start gap-3 rounded-lg border px-4 py-3", config.tone)}>
       <span className="mt-0.5 text-base leading-none">{config.icon}</span>
       <div className="min-w-0">
         <div className="text-sm font-semibold">{config.title}</div>
         <p className="mt-0.5 text-xs text-foreground/80">{statusReason || config.fallback}</p>
-        <p className="mt-0.5 text-xs text-muted">{config.action}</p>
+
+        {isFailed ? (
+          resetRequested ? (
+            <p className="mt-0.5 text-xs text-muted">
+              Your open positions were closed. Reset requested — your account will reset automatically in about{" "}
+              {hoursUntilReset(resetRequestedAt!)}h.
+            </p>
+          ) : (
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <p className="text-xs text-muted">
+                Your open positions were closed. Request a reset to start over — it applies automatically after {AUTO_RESET_HOURS}h.
+              </p>
+              <Button size="sm" onClick={() => void requestReset()}>
+                Request reset
+              </Button>
+            </div>
+          )
+        ) : (
+          <p className="mt-0.5 text-xs text-muted">{config.action}</p>
+        )}
       </div>
     </div>
   );
