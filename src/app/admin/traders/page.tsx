@@ -9,6 +9,7 @@ import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { DataTable, type Column } from "@/components/ui/DataTable";
+import { PhaseBadge } from "@/components/admin/PhaseBadge";
 import { formatCurrency, formatCompact, timeAgo, cn } from "@/lib/utils";
 
 const STATUS_TONE: Record<TraderStatus, "long" | "short" | "warning" | "neutral"> = {
@@ -71,6 +72,13 @@ export default function TradersPage() {
         const at = accountTier(t.accountSize, t.accountPhase);
         return at ? <Badge tone={at.tone}>{at.text}</Badge> : <span className="text-xs text-muted-2">—</span>;
       },
+    },
+    {
+      key: "phase",
+      header: "Phase",
+      align: "center",
+      sortValue: (t) => t.riskPhase ?? 1,
+      cell: (t) => <PhaseBadge phase={t.riskPhase ?? 1} />,
     },
     {
       key: "kyc",

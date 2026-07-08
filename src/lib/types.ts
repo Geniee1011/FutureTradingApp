@@ -170,6 +170,94 @@ export interface TraderRecord {
   createdAt: number;
   accountSize?: number | null; // assigned rule-tier size ($50K…$1M), null if unassigned
   accountPhase?: string | null; // 'Challenge Phase 1' | 'Challenge Phase 2' | 'Funded'
+  riskPhase?: number; // behavioural risk phase 1-4 (computed by the phase rules engine)
+}
+
+// --- Analytics (behavioural risk-phase dashboards) ---
+
+export interface PhaseRule {
+  ruleId: number;
+  variable: string;
+  operator: string;
+  value: number;
+  assignsPhase: number;
+  priority: number;
+  active: boolean;
+  notes: string | null;
+}
+
+export interface AnalyticsBucket {
+  label: string;
+  n: number;
+  winRate: number;
+}
+
+export interface OverallAnalytics {
+  avgPnlByPhase: { phase: number; avgPnl: number; n: number }[];
+  winRateByConsecutiveLosses: AnalyticsBucket[];
+  winRateByDailyLoss: AnalyticsBucket[];
+  winRateBySizeDeviation: AnalyticsBucket[];
+  lifetimeWinRateHistogram: { label: string; n: number }[];
+  mostTradedInstruments: { symbol: string; n: number }[];
+  shadowPnlCurve: { day: string; value: number }[];
+  totalClosedTrades: number;
+}
+
+export interface TraderVariables {
+  consecutive_losses: number;
+  consecutive_wins: number;
+  session_trade_count: number;
+  daily_loss_pct_consumed: number;
+  session_pnl: number;
+  session_win_rate: number;
+  time_in_session_minutes: number;
+  size_deviation_ratio: number;
+  current_drawdown_consumed_pct: number;
+  current_challenge_pnl_pct: number;
+  challenge_day: number;
+  reset_count: number;
+  lifetime_win_rate: number;
+  lifetime_trade_count: number;
+}
+
+export interface TraderState {
+  riskPhase: number;
+  variables: TraderVariables;
+  lifetimeWinRate: number;
+  lifetimeWinRateEs: number;
+  lifetimeWinRateNq: number;
+  lifetimeWinRateGc: number;
+  lifetimeWinRateCl: number;
+  lifetimeAvgWin: number;
+  lifetimeAvgLoss: number;
+  lifetimeTradeCount: number;
+  sessionPnl: number;
+  sessionTradeCount: number;
+  sessionWinRate: number;
+  lastTradeResult: string | null;
+  minutesSinceLastTrade: number | null;
+  resetCount: number;
+}
+
+export interface TraderTrade {
+  id: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  entryPrice: number;
+  exitPrice: number;
+  realizedPnl: number;
+  openedAt: number;
+  closedAt: number;
+  phaseAtOpen: number | null;
+}
+
+export interface TraderAnalytics {
+  accountId: string;
+  state: TraderState | null;
+  tradesByPhase: { phase: number; n: number }[];
+  sessionCurve: { time: number; value: number }[];
+  trades: TraderTrade[];
 }
 
 export interface AdminAccount {

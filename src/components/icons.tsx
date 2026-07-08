@@ -66,6 +66,14 @@ export const Icons = {
       <path d="M3 12h4l3 8 4-16 3 8h4" />
     </svg>
   ),
+  analytics: (p: IconProps) => (
+    <svg {...base(p)}>
+      <path d="M3 3v18h18" />
+      <rect x="7" y="12" width="3" height="6" rx="0.5" />
+      <rect x="12" y="8" width="3" height="10" rx="0.5" />
+      <rect x="17" y="4" width="3" height="14" rx="0.5" />
+    </svg>
+  ),
   alert: (p: IconProps) => (
     <svg {...base(p)}>
       <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />

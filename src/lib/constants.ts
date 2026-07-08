@@ -73,6 +73,7 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/admin/traders", label: "Traders", icon: "users" },
   { href: "/admin/accounts", label: "Accounts", icon: "account" },
   { href: "/admin/reviews", label: "Reviews", icon: "bell" },
+  { href: "/admin/analytics", label: "Analytics", icon: "analytics" },
   { href: "/admin/positions", label: "Positions", icon: "trade" },
   { href: "/admin/rules", label: "Rules", icon: "rules" },
   { href: "/admin/violations", label: "Violations", icon: "alert" },

@@ -10,7 +10,10 @@ import type {
   AdminPendingReview,
   AdminViolation,
   EvalRule,
+  OverallAnalytics,
+  PhaseRule,
   RuleTemplate,
+  TraderAnalytics,
   TraderDetail,
   TraderRecord,
   TraderStatus,
@@ -71,6 +74,16 @@ interface AdminState {
   getPendingReviews: () => Promise<AdminPendingReview[]>;
   /** Approve (advance/pass) or disapprove (reset current phase) a pending profit-target review. */
   submitReviewDecision: (accountId: string, decision: "approve" | "disapprove") => Promise<AdminActionResult>;
+  // --- analytics (behavioural risk-phase dashboards) ---
+  /** Overall analytics across all traders (null in mock mode / on failure). */
+  getAnalyticsOverall: () => Promise<OverallAnalytics | null>;
+  /** Per-trader analytics bundle (accepts an account id or user id). */
+  getAnalyticsTrader: (idOrUserId: string) => Promise<TraderAnalytics | null>;
+  /** The editable phase ruleset. */
+  getPhaseRules: () => Promise<PhaseRule[]>;
+  createPhaseRule: (input: Partial<PhaseRule>) => Promise<AdminActionResult>;
+  updatePhaseRule: (ruleId: number, patch: Partial<PhaseRule>) => Promise<AdminActionResult>;
+  deletePhaseRule: (ruleId: number) => Promise<AdminActionResult>;
 }
 
 export interface AdminActionResult {
@@ -394,5 +407,69 @@ export const useAdminStore = create<AdminState>((set, get) => ({
     const data = (await res.json().catch(() => ({}))) as AdminActionResult;
     if (res.ok) await get().refresh().catch(() => {});
     return res.ok ? { ...data, ok: true } : { ok: false, error: data.error ?? "decision failed" };
+  },
+
+  getAnalyticsOverall: async () => {
+    const token = live();
+    if (!token) return null;
+    const res = await fetch(`${API_BASE}/api/admin/analytics/overall`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+    if (!res || !res.ok) return null;
+    return (await res.json().catch(() => null)) as OverallAnalytics | null;
+  },
+
+  getAnalyticsTrader: async (idOrUserId) => {
+    const token = live();
+    if (!token) return null;
+    const res = await fetch(`${API_BASE}/api/admin/analytics/trader/${idOrUserId}`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+    if (!res || !res.ok) return null;
+    return (await res.json().catch(() => null)) as TraderAnalytics | null;
+  },
+
+  getPhaseRules: async () => {
+    const token = live();
+    if (!token) return [];
+    const res = await fetch(`${API_BASE}/api/admin/phase-rules`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+    if (!res || !res.ok) return [];
+    return (await res.json().catch(() => [])) as PhaseRule[];
+  },
+
+  createPhaseRule: async (input) => {
+    const token = live();
+    if (!token) return { ok: false, error: "Admin actions require the backend (not available in demo mode)." };
+    const res = await fetch(`${API_BASE}/api/admin/phase-rules`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(input),
+    }).catch(() => null);
+    if (!res) return { ok: false, error: "network error" };
+    const data = (await res.json().catch(() => ({}))) as AdminActionResult & { error?: string };
+    if (res.ok) await get().refresh().catch(() => {});
+    return res.ok ? { ok: true } : { ok: false, error: data.error ?? "create failed" };
+  },
+
+  updatePhaseRule: async (ruleId, patch) => {
+    const token = live();
+    if (!token) return { ok: false, error: "Admin actions require the backend (not available in demo mode)." };
+    const res = await fetch(`${API_BASE}/api/admin/phase-rules/${ruleId}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(patch),
+    }).catch(() => null);
+    if (!res) return { ok: false, error: "network error" };
+    const data = (await res.json().catch(() => ({}))) as AdminActionResult & { error?: string };
+    if (res.ok) await get().refresh().catch(() => {});
+    return res.ok ? { ok: true } : { ok: false, error: data.error ?? "update failed" };
+  },
+
+  deletePhaseRule: async (ruleId) => {
+    const token = live();
+    if (!token) return { ok: false, error: "Admin actions require the backend (not available in demo mode)." };
+    const res = await fetch(`${API_BASE}/api/admin/phase-rules/${ruleId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    }).catch(() => null);
+    if (!res) return { ok: false, error: "network error" };
+    if (res.ok) await get().refresh().catch(() => {});
+    return res.ok ? { ok: true } : { ok: false, error: "delete failed" };
   },
 }));
