@@ -80,22 +80,22 @@ function OverallView() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Section title="Average P&L by phase at open" hint="Mean realized P&L of closed trades, grouped by the risk phase when they opened.">
+        <Section title="Average P&L by phase" hint="Mean realized P&L of all closed trades, grouped by the risk phase they were in when opened (reconstructed from history).">
           <BarChart
             data={data.avgPnlByPhase.map((d) => ({ label: `P${d.phase}`, value: d.avgPnl, sub: `n=${d.n}`, color: phaseColor(d.phase) }))}
             format={money}
           />
         </Section>
-        <Section title="Win rate by consecutive losses at open" hint="Do traders do worse after a losing streak?">
+        <Section title="Win rate by consecutive losses" hint="Does win rate drop after a losing streak? Every trade bucketed by its prior streak.">
           <WinRateBars data={data.winRateByConsecutiveLosses} />
         </Section>
-        <Section title="Win rate by daily-loss consumed at open" hint="Win rate bucketed by how much of the daily loss limit was used.">
+        <Section title="Win rate by daily-loss consumed" hint="Does win rate drop once a trader is already down 20%, 40%, 70% of the daily loss limit?">
           <WinRateBars data={data.winRateByDailyLoss} />
         </Section>
-        <Section title="Win rate by size deviation at open" hint="Trade size vs the trader's 7-day average (oversizing signal).">
+        <Section title="Win rate by size deviation" hint="Trade size vs the trader's trailing 7-day average (oversizing signal).">
           <WinRateBars data={data.winRateBySizeDeviation} />
         </Section>
-        <Section title="Lifetime win-rate distribution" hint="How traders' overall win rates are distributed.">
+        <Section title="Lifetime win-rate distribution" hint="How every trader's overall win rate (across all their trades) is distributed.">
           <BarChart data={data.lifetimeWinRateHistogram.map((d) => ({ label: d.label, value: d.n }))} format={(v) => String(v)} color="#7c9cff" />
         </Section>
         <Section title="Most traded instruments" hint="Closed-trade count by instrument across all traders.">
@@ -176,7 +176,7 @@ function TraderView({ traderId }: { traderId: string }) {
             color={phaseColor(s.riskPhase)}
           />
         </Section>
-        <Section title="Trades by phase at open" hint="How many of this trader's trades opened in each phase.">
+        <Section title="Trades by phase" hint="How many of this trader's trades fell in each risk phase (reconstructed from history).">
           <BarChart data={data.tradesByPhase.map((d) => ({ label: `P${d.phase}`, value: d.n, color: phaseColor(d.phase) }))} format={(x) => String(x)} />
         </Section>
       </div>
