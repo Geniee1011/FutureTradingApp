@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAdminStore } from "@/store/admin-store";
 import { getWsClient } from "@/lib/ws-client";
 import { USE_MOCK_FEED } from "@/lib/constants";
-import type { OverallAnalytics, TraderAnalytics } from "@/lib/types";
+import type { AnalyticsBucket, OverallAnalytics, TraderAnalytics } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
@@ -16,6 +16,14 @@ import { formatCurrency, formatDateTime, cn } from "@/lib/utils";
 
 type Mode = "overall" | "trader";
 const money = (v: number) => formatCurrency(v);
+
+// The 4 behavioural dimensions — each rendered twice: once as Average P&L, once as Win rate.
+const DIMENSIONS: { title: string; hint: string; data: (o: OverallAnalytics) => AnalyticsBucket[]; phaseColored?: boolean }[] = [
+  { title: "phase", hint: "Grouped by the risk phase each trade was in when opened (reconstructed from history).", data: (o) => o.byPhase, phaseColored: true },
+  { title: "consecutive losses", hint: "Grouped by the trader's losing streak going into the trade.", data: (o) => o.byConsecutiveLosses },
+  { title: "daily-loss consumed", hint: "Grouped by how much of the daily loss limit was already used.", data: (o) => o.byDailyLoss },
+  { title: "size deviation", hint: "Trade size vs the trader's trailing 7-day average (oversizing signal).", data: (o) => o.bySizeDeviation },
+];
 
 export default function AnalyticsPage() {
   const [mode, setMode] = useState<Mode>("overall");
@@ -79,22 +87,30 @@ function OverallView() {
         <Stat label="Traders analysed" value={data.lifetimeWinRateHistogram.reduce((a, b) => a + b.n, 0)} />
       </div>
 
+      {/* Average P&L — one chart per dimension */}
+      <GroupHeading>Average P&L</GroupHeading>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Section title="Average P&L by phase" hint="Mean realized P&L of all closed trades, grouped by the risk phase they were in when opened (reconstructed from history).">
-          <BarChart
-            data={data.avgPnlByPhase.map((d) => ({ label: `P${d.phase}`, value: d.avgPnl, sub: `n=${d.n}`, color: phaseColor(d.phase) }))}
-            format={money}
-          />
-        </Section>
-        <Section title="Win rate by consecutive losses" hint="Does win rate drop after a losing streak? Every trade bucketed by its prior streak.">
-          <WinRateBars data={data.winRateByConsecutiveLosses} />
-        </Section>
-        <Section title="Win rate by daily-loss consumed" hint="Does win rate drop once a trader is already down 20%, 40%, 70% of the daily loss limit?">
-          <WinRateBars data={data.winRateByDailyLoss} />
-        </Section>
-        <Section title="Win rate by size deviation" hint="Trade size vs the trader's trailing 7-day average (oversizing signal).">
-          <WinRateBars data={data.winRateBySizeDeviation} />
-        </Section>
+        {DIMENSIONS.map((d) => (
+          <Section key={`pnl-${d.title}`} title={`Average P&L by ${d.title}`} hint={d.hint}>
+            <BarChart
+              data={d.data(data).map((b, i) => ({ label: b.label, value: b.avgPnl, sub: `n=${b.n}`, color: d.phaseColored ? phaseColor(i + 1) : undefined }))}
+              format={money}
+            />
+          </Section>
+        ))}
+      </div>
+
+      {/* Win rate — one chart per dimension */}
+      <GroupHeading>Win rate</GroupHeading>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {DIMENSIONS.map((d) => (
+          <Section key={`wr-${d.title}`} title={`Win rate by ${d.title}`} hint={d.hint}>
+            <WinRateBars data={d.data(data)} />
+          </Section>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Section title="Lifetime win-rate distribution" hint="How every trader's overall win rate (across all their trades) is distributed.">
           <BarChart data={data.lifetimeWinRateHistogram.map((d) => ({ label: d.label, value: d.n }))} format={(v) => String(v)} color="#7c9cff" />
         </Section>
@@ -245,6 +261,10 @@ function ToggleBtn({ active, onClick, children }: { active: boolean; onClick: ()
       {children}
     </button>
   );
+}
+
+function GroupHeading({ children }: { children: React.ReactNode }) {
+  return <h3 className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted">{children}</h3>;
 }
 
 function Section({ title, hint, children, className }: { title: string; hint?: string; children: React.ReactNode; className?: string }) {

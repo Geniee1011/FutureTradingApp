@@ -190,13 +190,14 @@ export interface AnalyticsBucket {
   label: string;
   n: number;
   winRate: number;
+  avgPnl: number;
 }
 
 export interface OverallAnalytics {
-  avgPnlByPhase: { phase: number; avgPnl: number; n: number }[];
-  winRateByConsecutiveLosses: AnalyticsBucket[];
-  winRateByDailyLoss: AnalyticsBucket[];
-  winRateBySizeDeviation: AnalyticsBucket[];
+  byPhase: AnalyticsBucket[];
+  byConsecutiveLosses: AnalyticsBucket[];
+  byDailyLoss: AnalyticsBucket[];
+  bySizeDeviation: AnalyticsBucket[];
   lifetimeWinRateHistogram: { label: string; n: number }[];
   mostTradedInstruments: { symbol: string; n: number }[];
   shadowPnlCurve: { day: string; value: number }[];
