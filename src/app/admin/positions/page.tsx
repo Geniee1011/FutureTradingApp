@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/Card";
 import { Stat } from "@/components/ui/Stat";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { PhaseBadge } from "@/components/admin/PhaseBadge";
 import { formatCurrency, formatPrice, formatDateTime, cn } from "@/lib/utils";
 
 type Tab = "open" | "closed";
@@ -145,6 +146,7 @@ export default function AdminPositionsPage() {
                   <Th>Trader</Th>
                   <Th>Symbol</Th>
                   <Th>Side</Th>
+                  <Th className="text-center">Conviction</Th>
                   <Th className="text-right">Qty</Th>
                   <Th className="text-right">Avg price</Th>
                   <Th className="text-right">Take profit</Th>
@@ -164,6 +166,7 @@ export default function AdminPositionsPage() {
                     </Td>
                     <Td className="font-medium">{p.symbol}</Td>
                     <Td><SideBadge side={p.side} /></Td>
+                    <Td className="text-center"><PhaseBadge phase={p.conviction ?? 1} /></Td>
                     <Td className="nums text-right">{p.quantity}</Td>
                     <Td className="nums text-right">{formatPrice(p.averagePrice)}</Td>
                     <Td className="nums text-right">
@@ -178,7 +181,7 @@ export default function AdminPositionsPage() {
                   </tr>
                 ))}
                 {openRows.length === 0 && (
-                  <EmptyRow span={10}>
+                  <EmptyRow span={11}>
                     {loading ? "Loading…" : open.length === 0 ? "No open positions across any account." : "No matching positions."}
                   </EmptyRow>
                 )}
@@ -191,6 +194,7 @@ export default function AdminPositionsPage() {
                   <Th>Trader</Th>
                   <Th>Symbol</Th>
                   <Th>Side</Th>
+                  <Th className="text-center">Conviction</Th>
                   <Th className="text-right">Qty</Th>
                   <Th className="text-right">Entry</Th>
                   <Th className="text-right">Exit</Th>
@@ -209,6 +213,7 @@ export default function AdminPositionsPage() {
                     </Td>
                     <Td className="font-medium">{p.symbol}</Td>
                     <Td><SideBadge side={p.side} /></Td>
+                    <Td className="text-center"><PhaseBadge phase={p.conviction ?? 1} /></Td>
                     <Td className="nums text-right">{p.quantity}</Td>
                     <Td className="nums text-right">{formatPrice(p.entryPrice)}</Td>
                     <Td className="nums text-right">{formatPrice(p.exitPrice)}</Td>
@@ -218,7 +223,7 @@ export default function AdminPositionsPage() {
                   </tr>
                 ))}
                 {closedRows.length === 0 && (
-                  <EmptyRow span={9}>
+                  <EmptyRow span={10}>
                     {loading ? "Loading…" : closed.length === 0 ? "No closed positions yet." : "No matching positions."}
                   </EmptyRow>
                 )}

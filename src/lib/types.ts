@@ -412,6 +412,7 @@ export interface AdminOpenPosition {
   openedAt: number;
   stopLoss?: number | null; // protective bracket levels (open OCO exit legs), null if none set
   takeProfit?: number | null;
+  conviction?: number; // risk phase (1-4) the trade opened in
 }
 
 /** A closed/reduced position across any account (admin-wide Positions view). */
@@ -428,6 +429,7 @@ export interface AdminClosedPosition {
   realizedPnl: number;
   openedAt: number;
   closedAt: number;
+  conviction?: number; // risk phase (1-4) the trade opened in
 }
 
 /** An account that reached its profit target and is awaiting an admin Approve/Disapprove. */
