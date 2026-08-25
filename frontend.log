@@ -12,3 +12,7 @@
  ✓ Compiled /middleware in 500ms (116 modules)
  ○ Compiling /login ...
  ✓ Compiled /login in 3.4s (683 modules)
+ GET /login?next=%2Ftrade 200 in 4286ms
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 699ms (422 modules)
+ GET /favicon.ico 200 in 901ms
