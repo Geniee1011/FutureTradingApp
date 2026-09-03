@@ -60,6 +60,13 @@ function authHeaders(token: string) {
 }
 
 let orderSeq = 200000;
+// Monotonic token guarding refresh() against out-of-order responses: refresh() is fired
+// from several independent, concurrent triggers (WS order_update, the 30s poll, tab
+// refocus, and a modify/cancel's own post-confirm call). Without this, an unrelated
+// refresh that happens to resolve AFTER a modify's refresh can land last and overwrite
+// the just-persisted price with stale data — visible on the chart as the dragged order
+// line "jumping back" to its old price.
+let refreshSeq = 0;
 
 export const useOrdersStore = create<OrdersState>((set, get) => ({
   orders: [],
@@ -233,6 +240,7 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
   refresh: async () => {
     const token = getAuthToken();
     if (USE_MOCK_FEED || !API_BASE || !token) return;
+    const seq = ++refreshSeq; // this call's slot — only the latest-issued refresh may apply its result
     try {
       const headers = { Authorization: `Bearer ${token}` };
       const [pRes, oRes] = await Promise.all([
@@ -240,7 +248,12 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
         fetch(`${API_BASE}/api/orders`, { headers }),
       ]);
       if (pRes.ok && oRes.ok) {
-        set({ positions: (await pRes.json()) as Position[], orders: (await oRes.json()) as Order[] });
+        const positions = (await pRes.json()) as Position[];
+        const orders = (await oRes.json()) as Order[];
+        // A newer refresh was issued (and may have already resolved) while this one was
+        // in flight — applying this stale response would revert any change it made.
+        if (seq !== refreshSeq) return;
+        set({ positions, orders });
       }
     } catch {
       /* keep current state */

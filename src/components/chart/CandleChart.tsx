@@ -781,15 +781,19 @@ export function CandleChart({ symbol }: { symbol: string }) {
     const series = candleRef.current;
     if (!series) return;
     const lines = orderLinesRef.current;
+    const ov = dragOverrideRef.current;
     const seen = new Set<string>();
     for (const o of visibleOrders) {
       seen.add(o.id);
       const prev = lines.get(o.id);
       if (prev) series.removePriceLine(prev);
+      // While this level is being dragged/awaiting confirm, keep it at the dragged price
+      // instead of the (not-yet-persisted) stored one — otherwise any unrelated store
+      // update recreates this line from the old price, snapping it back mid-drag.
       lines.set(
         o.id,
         series.createPriceLine({
-          price: o.price as number,
+          price: ov.get(o.id) ?? (o.price as number),
           // Neutral blue for the entry — distinct from the green TP and red SL (and the
           // green last-price marker). Buy/sell is conveyed by the pill's BUY/SELL label.
           color: "#3b82f6",
@@ -808,11 +812,12 @@ export function CandleChart({ symbol }: { symbol: string }) {
       for (const [key, px, color] of brackets) {
         const prevB = lines.get(key);
         if (prevB) series.removePriceLine(prevB);
-        if (px != null && px > 0) {
+        const dragPx = ov.get(key) ?? px;
+        if (dragPx != null && dragPx > 0) {
           seen.add(key);
           lines.set(
             key,
-            series.createPriceLine({ price: px, color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }),
+            series.createPriceLine({ price: dragPx, color, lineWidth: 1, lineStyle: LineStyle.Dotted, axisLabelVisible: false }),
           );
         }
       }
