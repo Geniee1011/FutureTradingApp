@@ -6,6 +6,7 @@ export const NAV_LINKS = [
   { href: "#scaling", label: "Scaling plan" },
   { href: "#pricing", label: "Pricing" },
   { href: "#payouts", label: "Payouts" },
+  { href: "/rules", label: "Rules" },
   { href: "#faq", label: "FAQs" },
 ];
 

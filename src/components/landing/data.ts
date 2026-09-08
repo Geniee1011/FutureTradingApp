@@ -302,6 +302,7 @@ export const FOOTER_LINKS: { heading: string; links: { label: string; href: stri
       { label: "Scaling plan", href: "#scaling" },
       { label: "How it works", href: "#how" },
       { label: "Pricing", href: "#pricing" },
+      { label: "Trading rules", href: "/rules" },
       { label: "FAQ", href: "#faq" },
     ],
   },
