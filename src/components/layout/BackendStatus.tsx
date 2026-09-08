@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { WS_URL, USE_MOCK_FEED } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +37,7 @@ async function pingHealth(): Promise<boolean> {
 export function BackendStatus() {
   const [status, setStatus] = useState<Status>(USE_MOCK_FEED ? "mock" : "checking");
   const [dismissed, setDismissed] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     if (USE_MOCK_FEED) return; // intentional offline build — nothing to poll
@@ -54,6 +56,10 @@ export function BackendStatus() {
       window.removeEventListener("focus", onFocus);
     };
   }, []);
+
+  // The public landing page is a marketing surface — an ops banner does not
+  // belong on it (and would collide with its sticky header).
+  if (pathname === "/") return null;
 
   // Healthy or still probing → no banner. (A failed probe resurfaces it.)
   if (status === "online" || status === "checking" || dismissed) return null;

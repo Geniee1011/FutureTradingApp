@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Roboto } from "next/font/google";
+import { Geist, Roboto, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { AuthHydrator } from "@/components/auth/AuthHydrator";
 import { BackendStatus } from "@/components/layout/BackendStatus";
@@ -8,6 +8,13 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 // Numbers (`.nums`) render in Roboto with tabular figures — a clean geometric sans that
 // matches the Tradovate look (proportional, not monospace; columns stay aligned).
 const robotoNums = Roboto({ variable: "--font-roboto", subsets: ["latin"], weight: ["400", "500", "700"] });
+// Italic serif used for accent words in landing headings ("Get *paid*", "*The Vault*").
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-serif",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+});
 
 export const metadata: Metadata = {
   title: "Trader Portal",
@@ -23,7 +30,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       lang="en"
       data-theme="dark"
       suppressHydrationWarning
-      className={`${geistSans.variable} ${robotoNums.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${robotoNums.variable} ${instrumentSerif.variable} h-full antialiased`}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: noFlashTheme }} />

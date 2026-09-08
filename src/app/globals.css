@@ -132,3 +132,153 @@ input[type="password"]::-ms-reveal,
 input[type="password"]::-ms-clear {
   display: none;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Landing page — "The Vault" marketing surface.
+
+   The portal runs on the dark trading tokens above and is theme-switchable.
+   The landing page is a fixed-palette marketing surface, so its colours are
+   scoped to `.landing` with `color-scheme: light` to stop the app's data-theme
+   toggle (and the browser) restyling it.
+   --------------------------------------------------------------------------- */
+.landing {
+  color-scheme: light;
+
+  --l-navy-950: #081120;
+  --l-navy-900: #0b1a2e;
+  --l-navy-850: #0e2138;
+  --l-navy-800: #12294a;
+  --l-navy-700: #17355f;
+  --l-navy-600: #1e4079;
+
+  --l-blue-600: #1d4ed8;
+  --l-blue-500: #2f6fd0;
+  --l-blue-400: #4d8ae0;
+  --l-blue-300: #7fb0f0;
+
+  --l-red: #e8112d;
+  --l-red-400: #ff2d4a;
+
+  --l-ink: #0a2342;
+  --l-body: #5b6b80;
+  --l-line: #e2e8f0;
+  --l-paper: #ffffff;
+  --l-paper-2: #f6f8fb;
+
+  background: var(--l-paper);
+  color: var(--l-ink);
+  font-family: var(--font-sans);
+}
+
+/* Accent words in headings are set in an italic serif — "Get *paid* quickly",
+   "*The Vault*", "*Zero Surprises*", and the step numerals. */
+.landing .l-serif {
+  font-family: var(--font-serif), Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Dark sections carry a faint blueprint grid. */
+.landing .l-grid {
+  background-color: var(--l-navy-900);
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* Primary CTA: red with a soft bloom underneath. */
+.landing .l-cta {
+  background: linear-gradient(180deg, var(--l-red-400) 0%, var(--l-red) 100%);
+  color: #fff;
+  box-shadow:
+    0 10px 30px -8px rgba(232, 17, 45, 0.6),
+    0 0 0 1px rgba(232, 17, 45, 0.35) inset;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.landing .l-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 40px -10px rgba(232, 17, 45, 0.7);
+}
+
+/* Glowing marker on the scaling-ladder rail. */
+.landing .l-node {
+  background: var(--l-red);
+  box-shadow:
+    0 0 0 4px rgba(232, 17, 45, 0.18),
+    0 0 18px 4px rgba(232, 17, 45, 0.55);
+}
+
+/* Blue gradient face shared by the certificate, step and pricing cards. */
+.landing .l-card-blue {
+  background: linear-gradient(150deg, var(--l-navy-700) 0%, var(--l-navy-600) 60%, #2a5ca8 130%);
+}
+
+/* Horizontal drift for the certificate and review rails. Pauses on hover and
+   for anyone who asked their OS to reduce motion. */
+@keyframes l-marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.landing .l-track {
+  animation: l-marquee var(--l-dur, 60s) linear infinite;
+  will-change: transform;
+}
+.landing .l-rail:hover .l-track {
+  animation-play-state: paused;
+}
+/* Rails never show a scrollbar — motion (or a swipe/trackpad) moves them, and a
+   bar under the cards would cut across the design. Scrolling itself stays
+   enabled, so the content is still reachable without the animation. */
+.landing .l-rail {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.landing .l-rail::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No drift — but the rail must stay reachable, so let it scroll by hand. */
+  .landing .l-track {
+    animation: none;
+  }
+  .landing .l-rail {
+    overflow-x: auto;
+  }
+}
+
+/* Anchor targets must clear the sticky header when jumped to. */
+.landing [id] {
+  scroll-margin-top: 5.5rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.landing) { scroll-behavior: smooth; }
+}
+
+/* Keyboard focus ring, in brand red so it reads on white and navy alike. */
+.landing a:focus-visible,
+.landing button:focus-visible,
+.landing summary:focus-visible {
+  outline: 2px solid var(--l-red);
+  outline-offset: 3px;
+  border-radius: 0.5rem;
+}
+
+/* Skip link — offscreen until focused. */
+.landing .l-skip { position: absolute; left: -9999px; top: 0; z-index: 100; }
+.landing .l-skip:focus {
+  left: 1rem; top: 1rem; padding: 0.75rem 1.25rem;
+  background: var(--l-navy-900); color: #fff;
+  border-radius: 0.5rem; font-size: 13px; font-weight: 700;
+}
+
+/* Placeholder fill used by <Img> if an asset is ever missing. */
+.landing .l-ph-light {
+  background-image: linear-gradient(135deg, #eef2f9 0%, #e3e9f4 50%, #edf1f8 100%);
+}
+.landing .l-ph-dark {
+  background-image: linear-gradient(135deg, rgba(47, 111, 208, 0.16) 0%, rgba(11, 26, 46, 0.5) 55%, rgba(232, 17, 45, 0.1) 100%);
+}
