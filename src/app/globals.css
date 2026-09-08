@@ -142,7 +142,7 @@ input[type="password"]::-ms-clear {
    scoped to `.landing` with `color-scheme: light` to stop the app's data-theme
    toggle (and the browser) restyling it.
    --------------------------------------------------------------------------- */
-.landing {
+:is(.landing, .onboarding) {
   color-scheme: light;
 
   --l-navy-950: #081120;
@@ -173,7 +173,7 @@ input[type="password"]::-ms-clear {
 
 /* Accent words in headings are set in an italic serif — "Get *paid* quickly",
    "*The Vault*", "*Zero Surprises*", and the step numerals. */
-.landing .l-serif {
+:is(.landing, .onboarding) .l-serif {
   font-family: var(--font-serif), Georgia, "Times New Roman", serif;
   font-style: italic;
   font-weight: 400;
@@ -181,7 +181,7 @@ input[type="password"]::-ms-clear {
 }
 
 /* Dark sections carry a faint blueprint grid. */
-.landing .l-grid {
+:is(.landing, .onboarding) .l-grid {
   background-color: var(--l-navy-900);
   background-image:
     linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
@@ -190,7 +190,7 @@ input[type="password"]::-ms-clear {
 }
 
 /* Primary CTA: red with a soft bloom underneath. */
-.landing .l-cta {
+:is(.landing, .onboarding) .l-cta {
   background: linear-gradient(180deg, var(--l-red-400) 0%, var(--l-red) 100%);
   color: #fff;
   box-shadow:
@@ -198,13 +198,13 @@ input[type="password"]::-ms-clear {
     0 0 0 1px rgba(232, 17, 45, 0.35) inset;
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
-.landing .l-cta:hover {
+:is(.landing, .onboarding) .l-cta:hover {
   transform: translateY(-2px);
   box-shadow: 0 16px 40px -10px rgba(232, 17, 45, 0.7);
 }
 
 /* Glowing marker on the scaling-ladder rail. */
-.landing .l-node {
+:is(.landing, .onboarding) .l-node {
   background: var(--l-red);
   box-shadow:
     0 0 0 4px rgba(232, 17, 45, 0.18),
@@ -212,7 +212,7 @@ input[type="password"]::-ms-clear {
 }
 
 /* Blue gradient face shared by the certificate, step and pricing cards. */
-.landing .l-card-blue {
+:is(.landing, .onboarding) .l-card-blue {
   background: linear-gradient(150deg, var(--l-navy-700) 0%, var(--l-navy-600) 60%, #2a5ca8 130%);
 }
 
@@ -222,36 +222,36 @@ input[type="password"]::-ms-clear {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }
-.landing .l-track {
+:is(.landing, .onboarding) .l-track {
   animation: l-marquee var(--l-dur, 60s) linear infinite;
   will-change: transform;
 }
-.landing .l-rail:hover .l-track {
+:is(.landing, .onboarding) .l-rail:hover .l-track {
   animation-play-state: paused;
 }
 /* Rails never show a scrollbar — motion (or a swipe/trackpad) moves them, and a
    bar under the cards would cut across the design. Scrolling itself stays
    enabled, so the content is still reachable without the animation. */
-.landing .l-rail {
+:is(.landing, .onboarding) .l-rail {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-.landing .l-rail::-webkit-scrollbar {
+:is(.landing, .onboarding) .l-rail::-webkit-scrollbar {
   display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   /* No drift — but the rail must stay reachable, so let it scroll by hand. */
-  .landing .l-track {
+  :is(.landing, .onboarding) .l-track {
     animation: none;
   }
-  .landing .l-rail {
+  :is(.landing, .onboarding) .l-rail {
     overflow-x: auto;
   }
 }
 
 /* Anchor targets must clear the sticky header when jumped to. */
-.landing [id] {
+:is(.landing, .onboarding) [id] {
   scroll-margin-top: 5.5rem;
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -259,26 +259,26 @@ input[type="password"]::-ms-clear {
 }
 
 /* Keyboard focus ring, in brand red so it reads on white and navy alike. */
-.landing a:focus-visible,
-.landing button:focus-visible,
-.landing summary:focus-visible {
+:is(.landing, .onboarding) a:focus-visible,
+:is(.landing, .onboarding) button:focus-visible,
+:is(.landing, .onboarding) summary:focus-visible {
   outline: 2px solid var(--l-red);
   outline-offset: 3px;
   border-radius: 0.5rem;
 }
 
 /* Skip link — offscreen until focused. */
-.landing .l-skip { position: absolute; left: -9999px; top: 0; z-index: 100; }
-.landing .l-skip:focus {
+:is(.landing, .onboarding) .l-skip { position: absolute; left: -9999px; top: 0; z-index: 100; }
+:is(.landing, .onboarding) .l-skip:focus {
   left: 1rem; top: 1rem; padding: 0.75rem 1.25rem;
   background: var(--l-navy-900); color: #fff;
   border-radius: 0.5rem; font-size: 13px; font-weight: 700;
 }
 
 /* Placeholder fill used by <Img> if an asset is ever missing. */
-.landing .l-ph-light {
+:is(.landing, .onboarding) .l-ph-light {
   background-image: linear-gradient(135deg, #eef2f9 0%, #e3e9f4 50%, #edf1f8 100%);
 }
-.landing .l-ph-dark {
+:is(.landing, .onboarding) .l-ph-dark {
   background-image: linear-gradient(135deg, rgba(47, 111, 208, 0.16) 0%, rgba(11, 26, 46, 0.5) 55%, rgba(232, 17, 45, 0.1) 100%);
 }
