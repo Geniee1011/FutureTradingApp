@@ -36,7 +36,7 @@ export function Hero({ ctaHref, ctaLabel }: { ctaHref: string; ctaLabel: string 
       />
 
       <div className="relative mx-auto max-w-[1180px] px-5 pt-12 pb-16 sm:px-8 sm:pt-16 lg:pt-20">
-        <h1 className="mx-auto max-w-4xl text-center text-[clamp(2.1rem,5.6vw,3.9rem)] leading-[1.06] font-extrabold tracking-[-0.03em] text-[var(--l-ink)]">
+        <h1 className="mx-auto max-w-4xl text-center text-[clamp(1.75rem,7vw,3.9rem)] leading-[1.06] font-extrabold tracking-[-0.03em] text-[var(--l-ink)]">
           Get funded. Keep every dollar
           <span className="l-serif ml-2.5 font-normal">you make.</span>
         </h1>

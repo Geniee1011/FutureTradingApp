@@ -27,7 +27,7 @@ export function TrustStats() {
               <div
                 key={s.label}
                 className={[
-                  "flex flex-col items-center px-3 text-center",
+                  "flex flex-col items-center px-1 text-center xs:px-3",
                   // Hairline to the left of every column except the first in its row.
                   i % 2 === 1 ? "border-l border-[var(--l-line)]" : "",
                   i > 0 ? "sm:border-l sm:border-[var(--l-line)]" : "sm:border-l-0",
@@ -36,7 +36,7 @@ export function TrustStats() {
                 <span className="h-6 w-6 text-[var(--l-ink)] sm:h-7 sm:w-7">
                   <Icon />
                 </span>
-                <dd className="nums mt-3.5 text-[clamp(1.6rem,4.6vw,2.6rem)] leading-none font-extrabold tracking-[-0.03em] text-[var(--l-ink)]">
+                <dd className="nums mt-3.5 text-[clamp(1.25rem,6vw,2.6rem)] leading-none font-extrabold tracking-[-0.03em] text-[var(--l-ink)]">
                   {s.value}
                 </dd>
                 <dt className="mt-2.5 text-[12.5px] text-[var(--l-body)]">{s.label}</dt>

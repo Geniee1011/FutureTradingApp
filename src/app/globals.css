@@ -32,6 +32,10 @@
   --font-nums: var(--font-roboto), ui-sans-serif, system-ui, sans-serif;
 
   --radius-card: 0.75rem;
+
+  /* Tailwind starts at sm:640px; `xs` separates small phones (320-415px)
+     from large ones, which otherwise share one set of base styles. */
+  --breakpoint-xs: 26rem;
 }
 
 /*
@@ -169,6 +173,8 @@ input[type="password"]::-ms-clear {
   background: var(--l-paper);
   color: var(--l-ink);
   font-family: var(--font-sans);
+  /* Long unbroken values (URLs, big figures) must never widen the page. */
+  overflow-wrap: break-word;
 }
 
 /* Accent words in headings are set in an italic serif — "Get *paid* quickly",

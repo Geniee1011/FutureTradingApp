@@ -113,12 +113,12 @@ function TopicRow({ topic }: { topic: Topic }) {
                 <div
                   key={f.label}
                   className={[
-                    "flex items-center justify-between gap-4 px-4 py-2.5",
+                    "flex flex-col gap-0.5 px-4 py-2.5 xs:flex-row xs:items-center xs:justify-between xs:gap-4",
                     i % 2 ? "bg-white" : "bg-[var(--l-paper-2)]",
                   ].join(" ")}
                 >
                   <dt className="text-[12.5px] text-[var(--l-body)]">{f.label}</dt>
-                  <dd className="nums text-right text-[12.5px] font-bold text-[var(--l-ink)]">
+                  <dd className="nums text-[12.5px] font-bold text-[var(--l-ink)] xs:text-right">
                     {f.value}
                   </dd>
                 </div>

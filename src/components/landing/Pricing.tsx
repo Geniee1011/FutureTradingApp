@@ -37,7 +37,7 @@ function PlanCard({ plan, ctaHref, featured }: { plan: Plan; ctaHref: string; fe
           {plan.rows.map((r) => (
             <div
               key={r.label}
-              className="flex items-center justify-between gap-4 border-b border-[var(--l-line)] py-3.5 last:border-0"
+              className="flex flex-col gap-1 border-b border-[var(--l-line)] py-3.5 last:border-0 xs:flex-row xs:items-center xs:justify-between xs:gap-4"
             >
               <dt className="flex items-center gap-2 text-[13px] text-[var(--l-ink)] sm:text-[13.5px]">
                 <span className="h-3.5 w-3.5 shrink-0 text-[var(--l-blue-500)]">
@@ -50,7 +50,7 @@ function PlanCard({ plan, ctaHref, featured }: { plan: Plan; ctaHref: string; fe
                   </span>
                 )}
               </dt>
-              <dd className="nums shrink-0 text-right text-[13px] font-bold text-[var(--l-ink)] sm:text-[13.5px]">
+              <dd className="nums text-[13px] font-bold text-[var(--l-ink)] xs:shrink-0 xs:text-right sm:text-[13.5px]">
                 {r.value}
               </dd>
             </div>
