@@ -1,30 +1,36 @@
+import type { GroupIcon, TopicIcon } from "./icons";
+
 /**
  * Rules content.
  *
- * Every figure here is taken from `seedRuleTemplates()` in
- * `src/lib/mock/data.ts` — the tiers the rules engine actually provisions — so
- * the published rules and the enforced rules cannot drift apart. Notably:
- * Phase 1 target 3% / drawdown 4%, Phase 2 target 6% / drawdown 3% (tighter),
- * funded target 10% with an end-of-day drawdown floor, daily loss 2%
- * throughout, minimum hold 15s, and a 30%-of-target cap on any single day.
+ * Figures come from `seedRuleTemplates()` in `src/lib/mock/data.ts` — the tiers
+ * the rules engine actually provisions — so the published rules and the
+ * enforced rules cannot drift apart. Key values: Phase 1 target 3% / drawdown
+ * 4%, Phase 2 target 6% / drawdown 3% (tighter), funded target 10% with an
+ * end-of-day drawdown floor, daily loss 2% throughout, minimum hold 15s, and a
+ * 30%-of-target cap on any single day.
  */
 
-export type GroupIcon = "book" | "scales" | "card" | "shield";
+export interface Fact {
+  label: string;
+  value: string;
+}
 
-export interface Rule {
-  /** Short question or statement used as the topic heading. */
+export interface Topic {
+  id: string;
   title: string;
+  icon: TopicIcon;
   body: string;
-  /** Optional label/value pairs rendered as a small table under the body. */
-  facts?: { label: string; value: string }[];
+  facts?: Fact[];
+  /** Extra bullet points shown under the body. */
+  points?: string[];
 }
 
 export interface Group {
   id: string;
   title: string;
   icon: GroupIcon;
-  blurb: string;
-  rules: Rule[];
+  topics: Topic[];
 }
 
 export const GROUPS: Group[] = [
@@ -32,33 +38,49 @@ export const GROUPS: Group[] = [
     id: "before-you-start",
     title: "Before you start",
     icon: "book",
-    blurb: "What you are buying, how the evaluation is structured, and who can take part.",
-    rules: [
+    topics: [
       {
-        title: "Account sizes and what you pay",
-        body: "You buy an evaluation once. There is no subscription and no monthly fee, and resets are unlimited and free — we do not make money from selling you another attempt. Choose the size you can trade honestly, not the largest one you can afford.",
-        facts: [
-          { label: "Sizes", value: "$50K · $100K · $250K · $500K · $1M" },
-          { label: "Billing", value: "One-time fee" },
-          { label: "Resets", value: "Unlimited, free" },
+        id: "overview",
+        title: "Overview",
+        icon: "doc",
+        body:
+          "The Vault funds futures traders. You buy one evaluation, prove you can trade within a fixed set of limits, and we put our capital behind you. There is no subscription, no profit split, and no cap on how many times you may try.",
+        points: [
+          "Buy an evaluation once — resets after that are free and unlimited.",
+          "Clear two phases without breaking a limit.",
+          "Trade a funded account and keep 100% of what you make.",
+          "Every 10% doubles your allocation, up to $1,000,000.",
         ],
       },
       {
-        title: "The two-phase evaluation",
-        body: "Phase 1 asks for a 3% gain. Phase 2 asks for 6% and tightens the drawdown from 4% to 3% — passing the first phase does not loosen the rules, it narrows them. Both phases require at least 5 separate trading days, so a single outsized session cannot pass you.",
+        id: "definitions",
+        title: "Definitions & How Everything Is Calculated",
+        icon: "calculator",
+        body:
+          "Every limit below is derived from your starting balance, never from your current equity. Drawing down does not lower your target, and profit does not raise it. Read this section first — most disputes come from assuming a different basis.",
         facts: [
-          { label: "Phase 1 target", value: "3% of account size" },
-          { label: "Phase 2 target", value: "6% of account size" },
-          { label: "Minimum trading days", value: "5 per phase" },
+          { label: "Starting balance", value: "The account size you bought" },
+          { label: "Equity", value: "Balance plus open position P&L" },
+          { label: "Profit target", value: "% of starting balance" },
+          { label: "Daily loss", value: "Measured from the session open" },
+          { label: "Trading day", value: "A day on which a position was opened" },
         ],
       },
       {
-        title: "Eligibility and account setup",
-        body: "One account per purchase. Your order can be redeemed exactly once and the registration email must match the one that bought it, so a link cannot be forwarded or reused. Identity and proof of address are verified before the funded account is issued.",
+        id: "eligibility",
+        title: "Eligibility & Account Ownership",
+        icon: "userCheck",
+        body:
+          "Accounts are personal. The person who passes the evaluation must be the person who trades the funded account, and identity is verified before funding is released.",
         facts: [
+          { label: "Minimum age", value: "18" },
           { label: "Accounts per purchase", value: "1" },
           { label: "Verification", value: "Photo ID + proof of address" },
-          { label: "Minimum age", value: "18" },
+        ],
+        points: [
+          "One account per person. Multiple accounts held by one trader are closed.",
+          "Accounts may not be sold, shared, transferred or traded by anyone else.",
+          "The registration email must match the email that made the purchase.",
         ],
       },
     ],
@@ -68,51 +90,77 @@ export const GROUPS: Group[] = [
     id: "trading-rules",
     title: "Trading rules",
     icon: "scales",
-    blurb: "The limits your account is measured against, on every order you send.",
-    rules: [
+    topics: [
       {
-        title: "Profit target",
-        body: "The target is a percentage of your starting balance, not of your current equity, so drawing down does not move it. Once you are funded the target becomes the threshold for a payout and an automatic doubling of your allocation.",
+        id: "evaluation",
+        title: "Evaluation: 2-Step Challenge",
+        icon: "shieldCheck",
+        body:
+          "Two phases, both measured against your starting balance. Passing Phase 1 does not relax the rules — Phase 2 asks for more profit against a tighter drawdown. There is no time limit on either phase.",
         facts: [
-          { label: "Phase 1", value: "3%" },
-          { label: "Phase 2", value: "6%" },
-          { label: "Funded", value: "10%" },
+          { label: "Phase 1 target", value: "3% of account size" },
+          { label: "Phase 2 target", value: "6% of account size" },
+          { label: "Minimum trading days", value: "5 per phase" },
+          { label: "Time limit", value: "None" },
         ],
       },
       {
-        title: "Maximum drawdown",
-        body: "During the evaluation the drawdown trails your highest equity intraday — it moves up with your gains and never back down. On a funded account it becomes an end-of-day floor instead, recalculated once at the session close, which gives you room to breathe inside the day.",
+        id: "drawdown",
+        title: "Drawdown & Risk Limits",
+        icon: "alert",
+        body:
+          "During an evaluation the drawdown trails your highest equity intraday: it rises with your gains and never falls back. On a funded account it becomes an end-of-day floor, recalculated once at the session close, which gives you room to work inside the day.",
         facts: [
-          { label: "Phase 1", value: "4% — intraday trailing" },
-          { label: "Phase 2", value: "3% — intraday trailing" },
-          { label: "Funded", value: "4% — end-of-day floor" },
+          { label: "Phase 1 drawdown", value: "4% — intraday trailing" },
+          { label: "Phase 2 drawdown", value: "3% — intraday trailing" },
+          { label: "Funded drawdown", value: "4% — end-of-day floor" },
+          { label: "Daily loss limit", value: "2% of account size" },
+        ],
+        points: [
+          "A stop-loss is required on every order; orders without one are rejected.",
+          "Breaching the maximum drawdown ends the evaluation.",
+          "Reaching the daily loss limit ends the session only — the account survives.",
         ],
       },
       {
-        title: "Daily loss limit",
-        body: "2% of your account size, measured from the session open and including open positions. Reaching it closes your positions and ends the day; the account resumes at the next session. It is a circuit breaker, not a breach — only the drawdown ends an evaluation.",
+        id: "instruments",
+        title: "Instruments & Trading Hours",
+        icon: "globe",
+        body:
+          "CME futures only, priced from a live Databento feed. You may trade the full session, but every position must be closed before it ends — the platform flattens anything still open.",
         facts: [
-          { label: "Limit", value: "2% of account size" },
-          { label: "$50,000 account", value: "$1,000" },
-          { label: "$100,000 account", value: "$2,000" },
-        ],
-      },
-      {
-        title: "Position size and risk per trade",
-        body: "Each tier carries a contract ceiling and a maximum risk per position. A stop-loss is required on every order — an order without one is rejected before it reaches the book rather than being closed out later.",
-        facts: [
-          { label: "$50K contracts", value: "3 (evaluation) · 5 (funded)" },
-          { label: "$1M contracts", value: "30 (funded)" },
-          { label: "Stop-loss", value: "Required on every order" },
-        ],
-      },
-      {
-        title: "Holding periods",
-        body: "Positions must be held for at least 15 seconds; anything faster has its profit voided while its losses stand, which removes the incentive to scalp the feed. All positions must be flat before the session close — overnight and weekend holds are not permitted on any account type.",
-        facts: [
-          { label: "Minimum hold", value: "15 seconds" },
+          { label: "Equity index", value: "ES · NQ · YM (+ Micros)" },
+          { label: "Energy", value: "CL (+ MCL)" },
+          { label: "Metals", value: "GC (+ MGC)" },
           { label: "Overnight holds", value: "Not permitted" },
           { label: "Weekend holds", value: "Not permitted" },
+        ],
+      },
+      {
+        id: "funded-rules",
+        title: "Funded Account Rules",
+        icon: "wallet",
+        body:
+          "Once funded, the target becomes the threshold for a payout and an automatic doubling of your allocation. The rule set is the same one you passed on, with the drawdown switched to an end-of-day floor and higher contract ceilings.",
+        facts: [
+          { label: "Profit target", value: "10% of account size" },
+          { label: "Minimum trading days", value: "10" },
+          { label: "$50K contracts", value: "5" },
+          { label: "$1M contracts", value: "30" },
+        ],
+      },
+      {
+        id: "prohibited",
+        title: "Prohibited Practices",
+        icon: "ban",
+        body:
+          "The limits above assume you are taking genuine market risk. The following exploit the evaluation rather than pass it, and void the profits they produce.",
+        points: [
+          "Latency arbitrage, or trading against a delayed or erroneous feed.",
+          "Running the same signal across multiple accounts so that one is bound to pass.",
+          "Hedging one account against another, whether yours or held by someone else.",
+          "Holding a position for under 15 seconds — profit is voided, losses stand.",
+          "Automated strategies are permitted, provided they respect every limit.",
         ],
       },
     ],
@@ -122,24 +170,32 @@ export const GROUPS: Group[] = [
     id: "getting-paid",
     title: "Getting paid",
     icon: "card",
-    blurb: "What you keep, when you can take it, and how the money reaches you.",
-    rules: [
+    topics: [
       {
-        title: "Profit split and scaling",
-        body: "You keep 100% of the profits you make on a funded account. We take no cut. Each time you reach the 10% target your allocation doubles automatically — $50K to $100K, then $250K, $500K and $1,000,000 — with no application and no renegotiation.",
+        id: "scaling",
+        title: "Scaling Plan",
+        icon: "trendUp",
+        body:
+          "Each time you reach the 10% target on a funded account your allocation doubles. There is no application, no interview and no renegotiation — it happens on the payout.",
         facts: [
-          { label: "Your share", value: "100%" },
-          { label: "Payout trigger", value: "10% on a funded account" },
-          { label: "Ceiling", value: "$1,000,000" },
+          { label: "Step 1", value: "$50,000" },
+          { label: "Step 2", value: "$100,000" },
+          { label: "Step 3", value: "$250,000" },
+          { label: "Step 4", value: "$500,000" },
+          { label: "Maximum", value: "$1,000,000" },
         ],
       },
       {
-        title: "Requesting a payout",
-        body: "Request from your account page once you hit the target. Payouts are reviewed by the risk desk and paid within 24 hours; there is no minimum tenure and no requirement to keep trading first. You will be asked for a document only if verification is incomplete.",
+        id: "payouts",
+        title: "Payouts & Profit Split",
+        icon: "banknote",
+        body:
+          "You keep everything you make. We do not take a percentage, and we do not charge for withdrawing. Request from your account page once you have hit the target and met the minimum trading days.",
         facts: [
-          { label: "Processing", value: "Within 24 hours" },
+          { label: "Your share", value: "100%" },
+          { label: "Processing time", value: "Within 24 hours" },
           { label: "Minimum tenure", value: "None" },
-          { label: "Fees", value: "None" },
+          { label: "Withdrawal fee", value: "None" },
         ],
       },
     ],
@@ -149,57 +205,82 @@ export const GROUPS: Group[] = [
     id: "enforcement",
     title: "Enforcement & operations",
     icon: "shield",
-    blurb: "How the rules are applied, what a breach costs you, and where to get help.",
-    rules: [
+    topics: [
       {
-        title: "How limits are enforced",
-        body: "Contract ceilings, risk per position and the stop-loss requirement are checked before an order leaves the ticket, so a non-compliant order is rejected rather than filled and unwound. Drawdown and daily loss are evaluated on every tick against your live equity.",
+        id: "breach",
+        title: "Breach System & Enforcement",
+        icon: "shield",
+        body:
+          "Limits are enforced by the platform, not reviewed afterwards. Contract ceilings, risk per position and the stop-loss requirement are checked before an order leaves the ticket, so a non-compliant order is rejected rather than filled and unwound later.",
         facts: [
           { label: "Order limits", value: "Checked pre-trade" },
           { label: "Drawdown", value: "Evaluated on every tick" },
+          { label: "Single-day cap", value: "30% of profit target" },
+        ],
+        points: [
+          "A hard breach — maximum drawdown — ends the evaluation immediately.",
+          "A soft breach — daily loss — flattens positions and ends that session.",
+          "You are always told which rule was hit and the figure that triggered it.",
         ],
       },
       {
-        title: "What happens when a rule is broken",
-        body: "Breaching the maximum drawdown ends the evaluation and closes the account. Reaching the daily loss limit flattens your positions and ends that session only. Either way you are told which rule was hit, with the figure that triggered it — nothing is decided after the fact.",
+        id: "resets",
+        title: "Resets, Retries & Subscription",
+        icon: "refresh",
+        body:
+          "We do not make money from selling you another attempt, so resets are free and unlimited. There is no monthly fee and nothing recurring to cancel.",
         facts: [
-          { label: "Drawdown breach", value: "Evaluation ends" },
-          { label: "Daily loss", value: "Session ends, account survives" },
-          { label: "Restart", value: "Free reset, immediately" },
+          { label: "Evaluation fee", value: "One-time" },
+          { label: "Resets", value: "Unlimited, free" },
+          { label: "Subscription", value: "None" },
         ],
       },
       {
-        title: "Consistency: the single-day cap",
-        body: "No single day may contribute more than 30% of your profit target. A day beyond that still counts toward your balance, but the surplus does not count toward passing. The rule exists so a funded account reflects a repeatable process rather than one lucky session.",
+        id: "inactivity",
+        title: "Account Inactivity & Closure",
+        icon: "userX",
+        body:
+          "Accounts are expected to be traded. An account with no activity for an extended period is closed to free the allocation, and you are notified before that happens.",
         facts: [
-          { label: "Cap", value: "30% of profit target per day" },
-          { label: "$50K Phase 1", value: "$450 of the $1,500 target" },
+          { label: "Inactivity window", value: "30 days without a trade" },
+          { label: "Notice", value: "Emailed before closure" },
+          { label: "Pending payouts", value: "Always paid before closure" },
         ],
       },
       {
-        title: "Minimum trading days",
-        body: "Evaluations require 5 separate trading days and funded accounts 10 before a payout qualifies. Days count only when a position was actually opened — logging in is not a trading day.",
+        id: "platform",
+        title: "Platform, Data & Execution",
+        icon: "monitor",
+        body:
+          "Trading runs through our own web terminal on a live Databento feed. If the platform or the feed fails during a session, affected trades are reviewed and any rule breach caused by the outage is reversed.",
         facts: [
-          { label: "Evaluation", value: "5 days" },
-          { label: "Funded", value: "10 days" },
+          { label: "Platform", value: "Web terminal" },
+          { label: "Market data", value: "Databento, live" },
+          { label: "Outage breaches", value: "Reviewed and reversed" },
         ],
       },
       {
-        title: "Prohibited strategies",
-        body: "Latency and feed arbitrage, group trading of the same signal across multiple accounts, and any use of one account to hedge another are not permitted. These void the profits they produce. Automated strategies are allowed provided they respect every limit above.",
+        id: "support",
+        title: "Support & Disputes",
+        icon: "headset",
+        body:
+          "If you believe a fill, a breach or a payout was handled incorrectly, raise it and we will review the underlying tick data with you. Decisions are explained with the figures behind them.",
         facts: [
-          { label: "Automation", value: "Allowed, within limits" },
-          { label: "Copy trading across accounts", value: "Not permitted" },
-          { label: "News trading", value: "Allowed" },
+          { label: "First response", value: "Within one business day" },
+          { label: "Trade review", value: "Against recorded tick data" },
+          { label: "Escalation", value: "To the risk desk" },
         ],
       },
       {
-        title: "Platform, data and outages",
-        body: "Markets are CME futures — E-mini and Micro contracts across equity index, energy and metals — on a live Databento feed. If our platform or feed fails during a session, affected trades are reviewed and rule breaches caused by the outage are reversed.",
+        id: "amendments",
+        title: "Amendments & Version History",
+        icon: "history",
+        body:
+          "Rules change as the product matures. Changes are versioned and dated, and anything that tightens a limit takes effect only for accounts opened after it — an account already in progress finishes under the rules it started on.",
         facts: [
-          { label: "Markets", value: "CME futures (E-mini, Micro)" },
-          { label: "Instruments", value: "ES · NQ · YM · CL · GC + Micros" },
-          { label: "Outages", value: "Reviewed and reversed" },
+          { label: "Notice period", value: "14 days for tightened limits" },
+          { label: "In-progress accounts", value: "Finish on their original rules" },
+          { label: "History", value: "Published with each change" },
         ],
       },
     ],
